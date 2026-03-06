@@ -778,7 +778,7 @@ RModel ParseFromPython(std::string jsonFilePath,
 
     // Step 1: Load JSON and rebuild numpy arrays from flat data+shape entries
     PyRunString("import json, numpy as np", fGlobalNS, fLocalNS);
-    PyRunString(TString::Format("with open('%s') as _f: _raw=json.load(_f)", jsonFilePath.c_str()), fGlobalNS, fLocalNS);
+    PyRunString(TString::Format("_raw=json.loads(open('%s').read())", jsonFilePath.c_str()), fGlobalNS, fLocalNS);
     PyRunString("globals().update(locals())", fGlobalNS, fLocalNS);
     PyRunString("_inits={k: np.array(v['data'],dtype=np.float32).reshape(v['shape']) for k,v in _raw['initializers'].items()}", fGlobalNS, fLocalNS);
 
