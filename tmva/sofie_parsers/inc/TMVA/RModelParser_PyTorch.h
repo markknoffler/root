@@ -47,6 +47,13 @@ RModel Parse(std::string filepath, std::vector<std::vector<size_t>> inputShapes,
 /// return the equivalent RModel object.
 RModel Parse(std::string filepath, std::vector<std::vector<size_t>> inputShapes);
 
+/// Parse a JSON file produced by the Python SOFIEPyTorchParser into an RModel object.
+/// Replaces the broken _model_to_graph ONNX path for modern PyTorch (>= 2.0).
+RModel ParseFromPython(std::string jsonFilePath, std::vector<std::vector<size_t>> inputShapes, std::vector<ETensorType> inputDTypes);
+
+/// Convenience overload — defaults all input types to FLOAT.
+RModel ParseFromPython(std::string jsonFilePath, std::vector<std::vector<size_t>> inputShapes);
+
 } // namespace TMVA::Experimental::SOFIE::PyTorch
 
 #endif //TMVA_PYMVA_RMODELPARSER_PYTORCH
