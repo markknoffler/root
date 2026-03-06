@@ -80,12 +80,12 @@ std::unique_ptr<ROperator> MakePyTorchRelu(PyObject* fNode);      // For instant
 std::unique_ptr<ROperator> MakePyTorchSelu(PyObject* fNode);      // For instantiating ROperator for PyTorch ONNX's Selu operator
 std::unique_ptr<ROperator> MakePyTorchSigmoid(PyObject* fNode);      // For instantiating ROperator for PyTorch ONNX's Sigmoid operator
 std::unique_ptr<ROperator> MakePyTorchTranspose(PyObject* fNode); // For instantiating ROperator for PyTorch ONNX's Transpose operator
-std::unique_ptr<ROperator> MakePyTorchElu(PyObject* fNode);
-std::unique_ptr<ROperator> MakePyTorchMaxPool(PyObject* fNode);
-std::unique_ptr<ROperator> MakePyTorchBatchNorm(PyObject* fNode);
-std::unique_ptr<ROperator> MakePyTorchRNN(PyObject* fNode);
-std::unique_ptr<ROperator> MakePyTorchLSTM(PyObject* fNode);
-std::unique_ptr<ROperator> MakePyTorchGRU(PyObject* fNode);
+std::unique_ptr<ROperator> MakePyTorchElu(PyObject* fNode);       // added for ELU activation support
+std::unique_ptr<ROperator> MakePyTorchMaxPool(PyObject* fNode);    // added for MaxPool2d support
+std::unique_ptr<ROperator> MakePyTorchBatchNorm(PyObject* fNode);  // added for BatchNorm2d support
+std::unique_ptr<ROperator> MakePyTorchRNN(PyObject* fNode);        // added for vanilla RNN support
+std::unique_ptr<ROperator> MakePyTorchLSTM(PyObject* fNode);       // added for LSTM support
+std::unique_ptr<ROperator> MakePyTorchGRU(PyObject* fNode);        // added for GRU support
 // For mapping PyTorch ONNX Graph's Node with the preparatory functions for ROperators
 using PyTorchMethodMap = std::unordered_map<std::string, std::unique_ptr<ROperator> (*)(PyObject* fNode)>;
 
@@ -97,12 +97,12 @@ const PyTorchMethodMap mapPyTorchNode =
     {"onnx::Selu",      &MakePyTorchSelu},
     {"onnx::Sigmoid",   &MakePyTorchSigmoid},
     {"onnx::Transpose", &MakePyTorchTranspose},
-    {"onnx::Elu",                &MakePyTorchElu},
-    {"onnx::MaxPool",            &MakePyTorchMaxPool},
-    {"onnx::BatchNormalization", &MakePyTorchBatchNorm},
-    {"onnx::RNN",                &MakePyTorchRNN},
-    {"onnx::LSTM",               &MakePyTorchLSTM},
-    {"onnx::GRU",                &MakePyTorchGRU},
+    {"onnx::Elu",                &MakePyTorchElu},         // new working
+    {"onnx::MaxPool",            &MakePyTorchMaxPool},     // new work
+    {"onnx::BatchNormalization", &MakePyTorchBatchNorm},   // new working
+    {"onnx::RNN",                &MakePyTorchRNN},         // new working
+    {"onnx::LSTM",               &MakePyTorchLSTM},        // new working
+    {"onnx::GRU",                &MakePyTorchGRU},         // new working
 
 };
 
@@ -404,7 +404,7 @@ std::unique_ptr<ROperator> MakePyTorchBatchNorm(PyObject* fNode) {
     PyObject* fInputs      = PyDict_GetItemString(fNode, "nodeInputs");
     PyObject* fOutputs     = PyDict_GetItemString(fNode, "nodeOutputs");
     std::string fNodeDType = PyStringAsString(PyList_GetItem(PyDict_GetItemString(fNode,"nodeDType"),0));
-    // nodeInputs order from batchnorm2d.py: [X, scale(gamma), bias(beta), running_mean, running_var]
+    // inputs come in this order: X, scale, bias, running_mean, running_var
     std::string nameX     = PyStringAsString(PyList_GetItem(fInputs, 0));
     std::string nameScale = PyStringAsString(PyList_GetItem(fInputs, 1));
     std::string nameB     = PyStringAsString(PyList_GetItem(fInputs, 2));
@@ -413,7 +413,7 @@ std::unique_ptr<ROperator> MakePyTorchBatchNorm(PyObject* fNode) {
     std::string nameY     = PyStringAsString(PyList_GetItem(fOutputs, 0));
     float epsilon  = (float)PyFloat_AsDouble(PyDict_GetItemString(fAttributes, "epsilon"));
     float momentum = (float)PyFloat_AsDouble(PyDict_GetItemString(fAttributes, "momentum"));
-    // training_mode=0: inference uses running_mean/running_var, not live batch stats
+    // training_mode=0 means we are doing inference so we use running_mean and running_var
     int training_mode = (int)PyLong_AsLong(PyDict_GetItemString(fAttributes, "training_mode"));
     std::unique_ptr<ROperator> op;
     switch(ConvertStringToType(fNodeDType)){
@@ -430,7 +430,7 @@ std::unique_ptr<ROperator> MakePyTorchRNN(PyObject* fNode) {
     PyObject* fInputs      = PyDict_GetItemString(fNode, "nodeInputs");
     PyObject* fOutputs     = PyDict_GetItemString(fNode, "nodeOutputs");
     std::string fNodeDType = PyStringAsString(PyList_GetItem(PyDict_GetItemString(fNode,"nodeDType"),0));
-    // nodeInputs: [X, W(weight_ih unsqueezed), R(weight_hh unsqueezed), B(bias combined)]
+    // inputs are: X (input), W (weight_ih reshaped to 3D), R (weight_hh reshaped to 3D), B (biases concatenated)
     std::string nameX = PyStringAsString(PyList_GetItem(fInputs, 0));
     std::string nameW = PyStringAsString(PyList_GetItem(fInputs, 1));
     std::string nameR = PyStringAsString(PyList_GetItem(fInputs, 2));
@@ -439,7 +439,7 @@ std::unique_ptr<ROperator> MakePyTorchRNN(PyObject* fNode) {
     size_t hidden_size = (size_t)PyLong_AsLong(PyDict_GetItemString(fAttributes,"hidden_size"));
     int bidi = (int)PyLong_AsLong(PyDict_GetItemString(fAttributes,"bidirectional"));
     std::string direction = bidi ? "bidirectional" : "forward";
-    // nonlinearity: PyTorch 'tanh'/'relu' → SOFIE activation string 'Tanh'/'Relu'
+    // PyTorch uses lowercase 'tanh'/'relu' but SOFIE wants 'Tanh'/'Relu'
     std::string nonlin = PyStringAsString(PyDict_GetItemString(fAttributes,"nonlinearity"));
     std::string activation = (nonlin == "tanh") ? "Tanh" : "Relu";
     std::unique_ptr<ROperator> op;
@@ -465,7 +465,7 @@ std::unique_ptr<ROperator> MakePyTorchLSTM(PyObject* fNode) {
     size_t hidden_size = (size_t)PyLong_AsLong(PyDict_GetItemString(fAttributes,"hidden_size"));
     int bidi = (int)PyLong_AsLong(PyDict_GetItemString(fAttributes,"bidirectional"));
     std::string direction = bidi ? "bidirectional" : "forward";
-    // LSTM standard activations: sigmoid for gates, tanh for cell/output
+    // LSTM uses sigmoid for the 3 gates and tanh for the cell and output
     std::unique_ptr<ROperator> op;
     switch(ConvertStringToType(fNodeDType)){
         case ETensorType::FLOAT:
@@ -489,8 +489,8 @@ std::unique_ptr<ROperator> MakePyTorchGRU(PyObject* fNode) {
     size_t hidden_size = (size_t)PyLong_AsLong(PyDict_GetItemString(fAttributes,"hidden_size"));
     int bidi = (int)PyLong_AsLong(PyDict_GetItemString(fAttributes,"bidirectional"));
     std::string direction = bidi ? "bidirectional" : "forward";
-    // GRU: sigmoid for r,z gates; tanh for new gate n
-    // linear_before_reset=0 matches PyTorch default behaviour
+    // GRU uses sigmoid for reset and update gates, tanh for the new gate
+    // linear_before_reset=0 is the default in PyTorch
     std::unique_ptr<ROperator> op;
     switch(ConvertStringToType(fNodeDType)){
         case ETensorType::FLOAT:
@@ -755,9 +755,9 @@ RModel Parse(std::string filepath,std::vector<std::vector<size_t>> inputShapes){
       return Parse(filepath,inputShapes,dtype);
 }
 
-/// ParseFromPython — reads JSON produced by SOFIEPyTorchParser.export_json()
-/// Replaces the broken _model_to_graph ONNX path for modern PyTorch (>= 2.0).
-/// Uses identical MakePyTorchNode dispatch — supports all 12 registered operators.
+// this function reads a JSON file that was exported by the Python SOFIEPyTorchParser
+// it does the same thing as Parse() but instead of loading a .pt file it reads the JSON
+// I added this because _model_to_graph stopped working in PyTorch 2.0+
 RModel ParseFromPython(std::string jsonFilePath,
                        std::vector<std::vector<size_t>> inputShapes,
                        std::vector<ETensorType> inputDTypes)
@@ -776,19 +776,19 @@ RModel ParseFromPython(std::string jsonFilePath,
     if (!fGlobalNS) throw std::runtime_error("Can't init global namespace for Python");
     if (!fLocalNS)  throw std::runtime_error("Can't init local namespace for Python");
 
-    // Step 1: Load JSON and rebuild numpy arrays from flat data+shape entries
+    // load the json file and reconstruct the weight arrays from the flat lists
     PyRunString("import json, numpy as np", fGlobalNS, fLocalNS);
     PyRunString(TString::Format("_raw=json.loads(open('%s').read())", jsonFilePath.c_str()), fGlobalNS, fLocalNS);
     PyRunString("globals().update(locals())", fGlobalNS, fLocalNS);
     PyRunString("_inits={k: np.array(v['data'],dtype=np.float32).reshape(v['shape']) for k,v in _raw['initializers'].items()}", fGlobalNS, fLocalNS);
 
-    // Step 2: modelData is already the correct nodeData list — just ensure nodeDType is set
+    // the operators list from JSON is already in the right format, just make sure nodeDType is always set
     PyRunString("modelData=[{**op,'nodeDType':op.get('nodeDType',['Float']) or ['Float']} for op in _raw['operators']]", fGlobalNS, fLocalNS);
 
     PyObject* fPModel      = PyDict_GetItemString(fLocalNS, "modelData");
     Py_ssize_t fPModelSize = PyList_Size(fPModel);
 
-    // Step 3: AddOperator loop — identical pattern to Parse()
+    // go through each operator and add it to the model, same as what Parse() does
     for (Py_ssize_t i = 0; i < fPModelSize; ++i) {
         PyObject* fNode = PyList_GetItem(fPModel, i);
         std::string fNodeType = PyStringAsString(PyDict_GetItemString(fNode, "nodeType"));
@@ -801,7 +801,7 @@ RModel ParseFromPython(std::string jsonFilePath,
         rmodel.AddOperator(INTERNAL::MakePyTorchNode(fNode));
     }
 
-    // Step 4: AddInitializedTensor loop — same pattern as Parse() weight loop
+    // now add all the weight tensors to the model
     PyRunString("_wnames=list(_inits.keys()); _warrays=list(_inits.values())", fGlobalNS, fLocalNS);
     PyObject* fPWNames   = PyDict_GetItemString(fLocalNS, "_wnames");
     PyObject* fPWArrays  = PyDict_GetItemString(fLocalNS, "_warrays");
@@ -816,7 +816,7 @@ RModel ParseFromPython(std::string jsonFilePath,
         rmodel.AddInitializedTensor(n, ETensorType::FLOAT, shape, data);
     }
 
-    // Step 5: Input tensor info — names from JSON, shapes from caller
+    // add the input tensor info using the names from the JSON and the shapes passed in by the caller
     PyRunString("_inames=list(_raw['inputs'].keys())", fGlobalNS, fLocalNS);
     PyObject* fPINames = PyDict_GetItemString(fLocalNS, "_inames");
     for (Py_ssize_t ii = 0; ii < PyList_Size(fPINames); ++ii) {
@@ -827,7 +827,7 @@ RModel ParseFromPython(std::string jsonFilePath,
         } else throw std::runtime_error("Unsupported input dtype: " + ConvertTypeToString(inputDTypes[ii]));
     }
 
-    // Step 6: Output tensor names
+    // add the output tensor names
     PyRunString("_onames=list(_raw['outputs'].keys())", fGlobalNS, fLocalNS);
     PyObject* fPONames = PyDict_GetItemString(fLocalNS, "_onames");
     std::vector<std::string> outNames;
@@ -838,7 +838,7 @@ RModel ParseFromPython(std::string jsonFilePath,
     return rmodel;
 }
 
-// Convenience overload — defaults all input types to FLOAT
+// overload that just uses FLOAT for all inputs so you dont have to pass the dtype vector
 RModel ParseFromPython(std::string jsonFilePath, std::vector<std::vector<size_t>> inputShapes) {
     return ParseFromPython(jsonFilePath, inputShapes, std::vector<ETensorType>(inputShapes.size(), ETensorType::FLOAT));
 }
