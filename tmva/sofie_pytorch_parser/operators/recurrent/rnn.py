@@ -1,23 +1,7 @@
-# operators/recurrent/rnn.py
-#
-# Vanilla RNN — ONNX op: onnx::RNN
-#
-# Math (one layer, one direction, nonlinearity=tanh):
-#   h_t = tanh(W_ih @ x_t + b_ih + W_hh @ h_{t-1} + b_hh)
-#
-# Weight shape per layer per direction (gate_factor=1):
-#   weight_ih_l{k}: (hidden_size, input_size)   [layer 0]
-#                   (hidden_size, hidden_size)   [layer k>0]
-#   weight_hh_l{k}: (hidden_size, hidden_size)
-#   bias_ih_l{k}:   (hidden_size,)
-#   bias_hh_l{k}:   (hidden_size,)
-#
-# Maps to ROperator_RNN<float> in SOFIE.
-
 import torch.nn as nn
 from typing import List
 from ..base import BaseOperatorParser, NodeData, make_node
-from .base_recurrent import extract_rnn_weights
+from .base_recurrent import extract_rnn_weights_onnx
 
 
 class RNNParser(BaseOperatorParser):
@@ -26,20 +10,11 @@ class RNNParser(BaseOperatorParser):
 
     def parse(self, module: nn.RNN, name: str,
               input_names: List[str], output_name: str) -> NodeData:
-        """
-        Parse nn.RNN into SOFIE onnx::RNN nodeData.
+        w_key, r_key, b_key, weights = extract_rnn_weights_onnx(module, name, gate_factor=1)
 
-        Attributes:
-          - hidden_size:   int
-          - input_size:    int
-          - num_layers:    int
-          - bidirectional: 0 or 1
-          - nonlinearity:  'tanh' or 'relu'
-          - has_bias:      0 or 1
-
-        gate_factor=1 (single gate — no stacking).
-        """
-        wnames, weights = extract_rnn_weights(module, name, gate_factor=1)
+        inputs = input_names + [w_key, r_key]
+        if b_key:
+            inputs.append(b_key)
 
         return make_node(
             node_type="onnx::RNN",
@@ -52,8 +27,7 @@ class RNNParser(BaseOperatorParser):
                 "has_bias":      int(module.bias),
                 "activations":   [module.nonlinearity.upper()],
             },
-            inputs=input_names + wnames,
+            inputs=inputs,
             outputs=[output_name],
             weights=weights,
         )
-
