@@ -1,0 +1,14 @@
+Recreating PyTorchModel (Linear32→16→ReLU→Linear16→8→ReLU)...
+Parsing with new SOFIEPyTorchParser...
+[SOFIE Parser] Exported → tmva/sofie/exercise3_outputs/TutorialModel_newparser.json (4 operators, 4 weight tensors)
+
+Operators found: ['onnx::Gemm', 'onnx::Relu', 'onnx::Gemm', 'onnx::Relu']
+Weights found:   ['0_weight', '0_bias', '2_weight', '2_bias']
+
+JSON written to tmva/sofie/exercise3_outputs/TutorialModel_newparser.json
+
+This JSON can now be passed to ParseFromPython() in C++ to generate
+identical inference code to what TMVA_SOFIE_PyTorch.C produces.
+
+Model output shape: torch.Size([2, 8])
+Done.

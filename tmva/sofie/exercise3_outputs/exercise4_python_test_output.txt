@@ -1,0 +1,44 @@
+
+=== 1. ELU ===
+  [PASS] ELU alpha=1.5: found ops = ['onnx::Gemm', 'onnx::Elu']
+[SOFIE Parser] Exported → tmva/sofie/exercise3_outputs/elu_model.json (2 operators, 2 weight tensors)
+  Operators: ['onnx::Gemm', 'onnx::Elu']
+  Weights:   ['0_weight', '0_bias']
+
+=== 2. MaxPool2D ===
+  [PASS] MaxPool2D k=2 s=2: found ops = ['onnx::Conv', 'onnx::Relu', 'onnx::MaxPool']
+[SOFIE Parser] Exported → tmva/sofie/exercise3_outputs/maxpool_model.json (3 operators, 2 weight tensors)
+  Operators: ['onnx::Conv', 'onnx::Relu', 'onnx::MaxPool']
+
+=== 3. BatchNorm2D ===
+  [PASS] BatchNorm2D: found ops = ['onnx::Conv', 'onnx::BatchNormalization', 'onnx::Relu']
+[SOFIE Parser] Exported → tmva/sofie/exercise3_outputs/batchnorm_model.json (3 operators, 6 weight tensors)
+  Operators: ['onnx::Conv', 'onnx::BatchNormalization', 'onnx::Relu']
+  BN weights: []
+
+=== 4. RNN ===
+  [PASS] RNN nonlinearity=tanh: found ops = ['onnx::RNN']
+[SOFIE Parser] Exported → tmva/sofie/exercise3_outputs/rnn_tanh_model.json (1 operators, 4 weight tensors)
+  [PASS] RNN nonlinearity=relu: found ops = ['onnx::RNN']
+[SOFIE Parser] Exported → tmva/sofie/exercise3_outputs/rnn_relu_model.json (1 operators, 4 weight tensors)
+  [PASS] RNN bidirectional: found ops = ['onnx::RNN']
+  direction=None, hiddensize=None
+
+=== 5. LSTM ===
+  [PASS] LSTM standard: found ops = ['onnx::LSTM']
+[SOFIE Parser] Exported → tmva/sofie/exercise3_outputs/lstm_model.json (1 operators, 4 weight tensors)
+  hiddensize=None, direction=None
+  weights: ['LSTM_weight_ih_l0', 'LSTM_weight_hh_l0', 'LSTM_bias_ih_l0', 'LSTM_bias_hh_l0']
+  [PASS] LSTM bidirectional: found ops = ['onnx::LSTM']
+[SOFIE Parser] Exported → tmva/sofie/exercise3_outputs/lstm_bidi_model.json (1 operators, 8 weight tensors)
+
+=== 6. GRU ===
+  [PASS] GRU standard: found ops = ['onnx::GRU']
+[SOFIE Parser] Exported → tmva/sofie/exercise3_outputs/gru_model.json (1 operators, 4 weight tensors)
+  hiddensize=None, linear_before_reset=None
+  [PASS] GRU bidirectional: found ops = ['onnx::GRU']
+[SOFIE Parser] Exported → tmva/sofie/exercise3_outputs/gru_bidi_model.json (1 operators, 8 weight tensors)
+
+==================================================
+ALL 6 OPERATORS PASSED
+JSON files written to tmva/sofie/exercise3_outputs
