@@ -20,6 +20,8 @@ from .layers.sigmoid import MakeKerasSigmoid
 from .layers.softmax import MakeKerasSoftmax
 from .layers.swish import MakeKerasSwish
 from .layers.tanh import MakeKerasTanh
+from .layers.rnn import MakeKerasRNN
+from .layers.conv_transpose import MakeKerasConvTranspose
 
 
 def MakeKerasActivation(layer):
@@ -63,9 +65,10 @@ mapKerasLayer = {
     "MaxPooling2D": MakeKerasPooling,
     "AveragePooling2D": MakeKerasPooling,
     "GlobalAveragePooling2D": MakeKerasPooling,
-    #  "SimpleRNN": MakeKerasRNN,
-    #  "GRU": MakeKerasRNN,
-    #  "LSTM": MakeKerasRNN,
+    "SimpleRNN": MakeKerasRNN,
+    "GRU": MakeKerasRNN,
+    "LSTM": MakeKerasRNN,
+    "Conv2DTranspose": MakeKerasConvTranspose,
 }
 
 mapKerasLayerWithActivation = {"Dense": MakeKerasDense, "Conv2D": MakeKerasConv}
@@ -200,6 +203,21 @@ def add_layer_into_RModel(rmodel, layer_data):
                 rmodel.AddOperator(move_operator(op))
                 inputs[0] = LayerName + "PreTrans"
                 outputs[0] = LayerName + "PostTrans"
+            rmodel.AddOperator(move_operator(mapKerasLayer[fLayerType](layer_data)))
+            if layer_data["channels_last"]:
+                op = SOFIE.ROperator_Transpose("float")([0, 2, 3, 1], LayerName + "PostTrans", fLayerOutput)
+                rmodel.AddOperator(move_operator(op))
+
+        elif fLayerType == "Conv2DTranspose":
+            # Conv2DTranspose also uses channels-last layout in keras so we need the same
+            # pre/post transpose trick that regular Conv2D uses
+            if layer_data["channels_last"]:
+                op = SOFIE.ROperator_Transpose("float")([0, 3, 1, 2], inputs[0], LayerName + "PreTrans")
+                rmodel.AddOperator(move_operator(op))
+                inputs[0] = LayerName + "PreTrans"
+                layer_data["layerInput"] = inputs
+                outputs[0] = LayerName + "PostTrans"
+                layer_data["layerOutput"] = outputs
             rmodel.AddOperator(move_operator(mapKerasLayer[fLayerType](layer_data)))
             if layer_data["channels_last"]:
                 op = SOFIE.ROperator_Transpose("float")([0, 2, 3, 1], LayerName + "PostTrans", fLayerOutput)
@@ -395,7 +413,7 @@ class PyKeras:
                 layer_data["layerWeight"] = []
 
             # for convolutional and pooling layers we need to know the format of the data
-            if layer_data["layerType"] in ["Conv2D", "MaxPooling2D", "AveragePooling2D", "GlobalAveragePooling2D"]:
+            if layer_data["layerType"] in ["Conv2D", "Conv2DTranspose", "MaxPooling2D", "AveragePooling2D", "GlobalAveragePooling2D"]:
                 layer_data["channels_last"] = True if layer.data_format == "channels_last" else False
 
             # for recurrent type layers we need to extract additional unique information
@@ -425,7 +443,9 @@ class PyKeras:
                 rmodel.AddBlasRoutines({"Gemm", "Gemv"})
             elif fLayerType == "BatchNormalization":
                 rmodel.AddBlasRoutines({"Copy", "Axpy"})
-            elif fLayerType == "Conv1D" or fLayerType == "Conv2D" or fLayerType == "Conv3D":
+            elif fLayerType in ["Conv1D", "Conv2D", "Conv3D", "Conv2DTranspose"]:
+                rmodel.AddBlasRoutines({"Gemm", "Axpy"})
+            elif fLayerType in ["SimpleRNN", "GRU", "LSTM"]:
                 rmodel.AddBlasRoutines({"Gemm", "Axpy"})
             rmodel = add_layer_into_RModel(rmodel, layer_data)
 
@@ -439,6 +459,8 @@ class PyKeras:
                 weightProp["name"] = keras_model.weights[idx].path
             weightProp["dtype"] = keras_model.get_weights()[idx].dtype.name
             if "conv" in weightProp["name"] and keras_model.weights[idx].shape.ndims == 4:
+                # both Conv2D and Conv2DTranspose kernels stored as (H, W, ch_a, ch_b) in keras
+                # ONNX expects (ch_b, ch_a, H, W) so we apply the same permutation for both
                 weightProp["value"] = keras_model.get_weights()[idx].transpose((3, 2, 0, 1)).copy()
             else:
                 weightProp["value"] = keras_model.get_weights()[idx]
