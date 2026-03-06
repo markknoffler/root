@@ -87,23 +87,30 @@ class SOFIEPyTorchParser:
 
         model.eval()
 
-        for child_name, module in model.named_children():
-            out = self._uid(f"out_{child_name}")
-            parser = _TYPE_MAP.get(type(module))
-
-            if parser is None:
-                print(f"[SOFIE Parser] WARNING: Unsupported layer "
-                      f"'{type(module).__name__}' at '{child_name}' — skipping")
-                current = out
-                continue
-
-            node = parser.parse(module, child_name, [current], out)
+        top_level_parser = _TYPE_MAP.get(type(model))
+        if top_level_parser is not None:
+            out = self._uid(f"out_{type(model).__name__}")
+            node = top_level_parser.parse(model, type(model).__name__, [current], out)
             operators.append(node)
-
-            # Merge this operator's weights into the global initializer store
             initializers.update(node.get("nodeWeights", {}))
-
             current = out
+        else:
+            for child_name, module in model.named_children():
+                out = self._uid(f"out_{child_name}")
+                parser = _TYPE_MAP.get(type(module))
+
+                if parser is None:
+                    print(f"[SOFIE Parser] WARNING: Unsupported layer "
+                          f"'{type(module).__name__}' at '{child_name}' — skipping")
+                    current = out
+                    continue
+
+                node = parser.parse(module, child_name, [current], out)
+                operators.append(node)
+
+                initializers.update(node.get("nodeWeights", {}))
+
+                current = out
 
         return {
             "operators":    operators,
