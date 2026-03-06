@@ -382,10 +382,17 @@ std::unique_ptr<ROperator> MakePyTorchMaxPool(PyObject* fNode) {
     auto pads     = GetDataFromList(PyDict_GetItemString(fAttributes, "pads"));
     auto dilations= GetDataFromList(PyDict_GetItemString(fAttributes, "dilations"));
     int ceil_mode = (int)PyLong_AsLong(PyDict_GetItemString(fAttributes, "ceil_mode"));
+    RAttributes_Pool attr;
+    attr.auto_pad    = "NOTSET";
+    attr.ceil_mode   = ceil_mode;
+    attr.dilations   = dilations;
+    attr.kernel_shape = kernel;
+    attr.pads        = pads;
+    attr.strides     = strides;
     std::unique_ptr<ROperator> op;
     switch(ConvertStringToType(fNodeDType)){
         case ETensorType::FLOAT:
-            op.reset(new ROperator_Pool<float>("MaxPool","NOTSET",ceil_mode,dilations,kernel,pads,strides,nameX,nameY)); break;
+            op.reset(new ROperator_Pool<float>(MaxPool, attr, nameX, nameY)); break;
         default:
             throw std::runtime_error("TMVA::SOFIE - Operator MaxPool does not yet support type " + fNodeDType);
     }
