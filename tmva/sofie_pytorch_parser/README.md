@@ -2,7 +2,7 @@
 
 This directory contains a Python-native parser for PyTorch `nn.Module` models.
 
-The parser translates trained PyTorch models directly into SOFIE's intermediate representation without going through the deprecated `torch.onnx.utils._model_to_graph` path that the original C++ parser relies on. It generates JSON output that feeds into the existing `RModelParser_PyTorch.cxx` C++ interface, which then produces standalone C++ inference headers (`.hxx`) — the same output that SOFIE produces for every other parser.
+The parser inspects live `nn.Module` objects directly — reading weights, attributes, and layer configurations — and serialises everything into a JSON file that feeds into `ParseFromPython()` in `RModelParser_PyTorch.cxx`. That C++ function builds a SOFIE `RModel` from the JSON and generates a standalone C++ inference header (`.hxx`) — the same output SOFIE produces for every other supported format.
 
 ---
 
@@ -10,7 +10,9 @@ The parser translates trained PyTorch models directly into SOFIE's intermediate 
 
 SOFIE (System for Optimized Fast Inference code Emit) lives inside ROOT's TMVA module. It takes a trained model — from Keras, PyTorch, or ONNX — parses it into an internal `RModel` object, and generates a self-contained C++ header with a `Session::infer()` function. That header requires no Python, no PyTorch, no TensorFlow at inference time. It is designed to run inside CERN's real-time particle physics pipelines where only plain C++ is viable.
 
-The existing PyTorch parser (`RModelParser_PyTorch.cxx`) worked by converting a `.pt` TorchScript file to an ONNX graph using `_model_to_graph`, an internal PyTorch function that was removed in PyTorch 2.0+. This parser was also C++-only, meaning models could not be parsed directly from Python the way the Keras parser allows. The goal of this work is to fix both of those problems.
+The existing PyTorch parser in `RModelParser_PyTorch.cxx` operates on TorchScript `.pt` files: it loads the model with `torch.jit.load()`, builds dummy inputs matching each input shape, passes them through `_model_to_graph()` to obtain an ONNX graph, and then walks that graph node by node. This path works for TorchScript-saved models and runs entirely through C++.
+
+The Keras parser, by contrast, can be invoked directly from Python — you pass a live model object to the parser and get an `RModel` back, all inside a Python script. This work extends that same idea to PyTorch: a Python parser that works directly on a live `nn.Module`, with no `.pt` file required. The C++ side was extended with `ParseFromPython()` so the output JSON still flows through the full SOFIE `RModel` → `Generate()` → `.hxx` pipeline, maintaining full compatibility with the existing C++ infrastructure.
 
 ---
 
@@ -49,7 +51,7 @@ The existing C++ parser was extended with:
 - `MakePyTorchLSTM` — handles `onnx::LSTM` nodes
 - `MakePyTorchGRU` — handles `onnx::GRU` nodes
 
-These new `Make*` functions follow the same pattern as the existing ones (`MakePyTorchGemm`, `MakePyTorchConv`, etc.) and are registered in `mapPyTorchNode` so they work for both the original `.pt` parsing path and the new JSON path.
+These new `Make*` functions follow the same pattern as the existing ones (`MakePyTorchGemm`, `MakePyTorchConv`, etc.) and are registered in `mapPyTorchNode` so they work for both the original `.pt` TorchScript path and the new JSON path.
 
 ---
 
@@ -101,7 +103,7 @@ tmva/sofie_pytorch_parser/
 
 ### Why This Structure
 
-The `operators/` directory is split by category intentionally. As SOFIE continues to evolve, the PyTorch parser will need to support more layers — attention mechanisms, custom activations, normalisation variants, pooling variants, and so on. Keeping each category in its own subdirectory makes it straightforward to add new operators without making any existing file longer or harder to navigate. This is particularly relevant given that the GSoC project description explicitly lists "PyTorch custom model extensions" as a future milestone.
+The `operators/` directory is split by category intentionally. As SOFIE continues to evolve, the PyTorch parser will need to support more layers — attention mechanisms, custom activations, normalisation variants, pooling variants, and so on. Keeping each category in its own subdirectory makes it straightforward to add new operators without making any existing file longer or harder to navigate.
 
 The `core/` layer is kept separate from `operators/` because the orchestration logic (walking the module tree, resolving the type map, accumulating state) is independent of any specific operator. A new operator can be added by writing one new file in the right `operators/` subdirectory and registering it in `core/parser.py` — nothing else changes.
 
@@ -109,7 +111,7 @@ The `core/` layer is kept separate from `operators/` because the orchestration l
 
 ## The Restructured Branch
 
-A second branch — `sofie_samreedh_pytorch_parser_restructured` — exists alongside this one. It contains the same parser but reorganised to match the Keras parser's directory layout more closely.
+A second branch — `sofie_samreedh_pytorch_parser_restructured` — contains the same parser reorganised to match the Keras parser's directory layout more closely.
 
 In that branch the parser lives at:
 
@@ -160,7 +162,7 @@ python tmva/sofie_pytorch_parser/tests/test_tutorial_model.py \
   2>&1 | tee tmva/sofie/exercise_outputs/exercise4_tutorial_demo_output.txt
 ```
 
-This recreates the same `nn.Sequential(Linear→ReLU→Linear→ReLU)` model that `TMVA_SOFIE_PyTorch.C` uses, parses it through the new Python parser, and exports a JSON file. This demonstrates backwards compatibility — the new parser produces the same graph structure and weight layout as the original C++ ONNX path.
+This recreates the same `nn.Sequential(Linear→ReLU→Linear→ReLU)` model that `TMVA_SOFIE_PyTorch.C` uses, parses it through the new Python parser, and exports a JSON file. This demonstrates backwards compatibility — the new Python parser produces the same graph structure and weight layout as the original C++ TorchScript path, and the same C++ operator handlers (`MakePyTorchGemm`, `MakePyTorchRelu`) process both.
 
 ### C++ inference pipeline
 
@@ -220,13 +222,13 @@ The JSON file that the Python parser produces and the C++ `ParseFromPython()` co
 }
 ```
 
-The `nodeType`, `nodeAttributes`, `nodeInputs`, `nodeOutputs`, and `nodeDType` fields match exactly the dict structure documented in `RModelParser_PyTorch.cxx` under `INTERNAL::MakePyTorchNode()`. This means the JSON path and the original `.pt` ONNX path feed into exactly the same C++ dispatch logic.
+The `nodeType`, `nodeAttributes`, `nodeInputs`, `nodeOutputs`, and `nodeDType` fields match exactly the dict structure documented in `RModelParser_PyTorch.cxx` under `INTERNAL::MakePyTorchNode()`. This means the JSON path and the original `.pt` TorchScript path feed into exactly the same C++ dispatch logic.
 
 ---
 
 ## Exercise 5 — Keras Parser Extensions
 
-As part of the bonus exercise, three new layer types were added to the existing Keras parser at `bindings/pyroot/pythonizations/python/ROOT/_pythonization/_tmva/_sofie/_parser/_keras/`:
+Three new layer types were added to the existing Keras parser at `bindings/pyroot/pythonizations/python/ROOT/_pythonization/_tmva/_sofie/_parser/_keras/`:
 
 **GRU, LSTM, SimpleRNN** — the `mapKerasLayer` dictionary in `parser.py` already had these entries but they were commented out. They were re-enabled and connected to the existing `MakeKerasRNN` function in `layers/rnn.py`, which was already implemented for all three recurrent types.
 
@@ -258,7 +260,7 @@ All four models parsed successfully. `Conv2DTranspose` with `valid` padding pass
 
 ### Exercise 1 — Building ROOT from Source
 
-ROOT was built from source on a Linux machine (Ubuntu-based) with the following CMake configuration:
+ROOT was built from source on a Linux machine with the following CMake configuration:
 
 ```bash
 cmake ../root \
@@ -268,7 +270,7 @@ cmake ../root \
   -Dpyroot=ON
 ```
 
-Key dependencies installed: `libprotobuf-dev`, `protobuf-compiler` (Protobuf 3 — required for ONNX parsing in SOFIE), NumPy, TensorFlow, PyTorch. The build directory is kept out-of-source at `root-build/` next to the source tree. After building, the environment is sourced with `source root-build/bin/thisroot.sh`.
+Key dependencies: `libprotobuf-dev` and `protobuf-compiler` (required for ONNX parsing in SOFIE), NumPy, TensorFlow, PyTorch. The build directory is kept out-of-source at `root-build/` next to the source tree. After building, the environment is sourced with `source root-build/bin/thisroot.sh`.
 
 A development branch `sofie_samreedh_initials_tasks_branch` was created from the latest `master` of the forked ROOT repository. All exercise work is committed to this branch.
 
@@ -276,14 +278,14 @@ A development branch `sofie_samreedh_initials_tasks_branch` was created from the
 
 The following tutorials were run and explored:
 
-**`TMVA_Higgs_Classification`** — Higgs boson signal vs background classification using TMVA's deep learning engine (DNN), BDT, and Keras via PyMVA. The overtraining check revealed that PyTorch overfit noticeably relative to TMVA's native DNN — test loss `0.099` vs train loss `0.245` at a given configuration — while TMVA's own CNN was the most stable across training. This difference is partly because 10 epochs on 1600 events is aggressive for a PyTorch model without regularisation, whereas TMVA's internal DNN applies its own early stopping logic.
+**`TMVA_Higgs_Classification`** — Higgs boson signal vs background classification using TMVA's deep learning engine (DNN), BDT, and Keras via PyMVA. The overtraining check revealed that PyTorch overfit noticeably — test loss `0.099` vs train loss `0.245` at one configuration — while TMVA's native CNN was the most stable. This difference is partly because 10 epochs on 1600 events without regularisation pushes a PyTorch model hard, whereas TMVA's internal DNN has its own early stopping behaviour.
 
-**`TMVA_CNN_Classification`** — classification using a 2D convolutional network, with an optional path through Keras via the PyMVA interface. This was important context for the Keras parser work since PyMVA is the bridge that `RModelParser_Keras` depends on.
+**`TMVA_CNN_Classification`** — classification using a 2D convolutional network, with an optional path through Keras via the PyMVA interface. This was important context for understanding how PyMVA bridges Python-trained models into ROOT, which is what `RModelParser_Keras` depends on.
 
 **`TMVA_SOFIE_Models.py`** — Keras to SOFIE pipeline. Trained a small Keras model, called `ParseFromMemory()` in SOFIE's Python interface, and generated `HiggsModel.hxx` and `KerasModel.hxx`. These files are in `tmva/sofie/exercise_outputs/`.
 
-**`TMVA_SOFIE_ONNX.C`** — ran the ONNX parser tutorial end to end. Observed that SOFIE uses a graph reordering pass and a shared memory pool for intermediate tensors — two features that are specific to the ONNX path and not currently present in the PyTorch path.
+**`TMVA_SOFIE_ONNX.C`** — ran the ONNX parser tutorial end to end. SOFIE applies a graph reordering pass and uses a shared memory pool for intermediate tensors on the ONNX path — features not currently present on the PyTorch path.
 
-**`TMVA_SOFIE_PyTorch.C`** — ran the PyTorch parser tutorial. The generated code for the same `Linear→ReLU→Linear→ReLU` network is structurally different from the ONNX-generated code: the PyTorch parser emits ReLU as a separate loop over elements, while the ONNX parser fuses Gemm and ReLU into a single block. This codegen inconsistency between the two parsers is exactly the kind of thing the GSoC project is meant to address. The tutorial output is saved at `tmva/sofie/exercise_outputs/exercise3_pytorch_output.txt`.
+**`TMVA_SOFIE_PyTorch.C`** — ran the PyTorch parser tutorial. One thing worth noting: the generated code for the same `Linear→ReLU→Linear→ReLU` network is structured differently from the ONNX-generated version. The PyTorch parser emits ReLU as a separate element-wise loop, while the ONNX parser fuses Gemm and ReLU into a single block. Same network, same weights, slightly different codegen depending on which parser produced the header. The tutorial output is saved at `tmva/sofie/exercise_outputs/exercise3_pytorch_output.txt`.
 
 The generated files from all three SOFIE tutorials are in `tmva/sofie/exercise_outputs/`: `PyTorchModel.hxx`, `PyTorchModel.dat`, `KerasModel.hxx`, `HiggsModel.hxx`, and their associated `.dat` weight files.
