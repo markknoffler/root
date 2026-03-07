@@ -47,7 +47,13 @@ def parse_and_generate(model_path, batch_size):
 def sofie_infer(model_path, x, batch_size):
     import ROOT
     input_shape = list(x.shape)
-    reader = ROOT.TMVA.Experimental.RSofieReader(model_path, [input_shape])
+    reader = ROOT.TMVA.Experimental.RSofieReader()
+    shapes = ROOT.std.vector["std::vector<size_t>"]()
+    s = ROOT.std.vector["size_t"]()
+    for d in input_shape:
+        s.push_back(d)
+    shapes.push_back(s)
+    reader.Load(model_path, shapes)
     flat = x.flatten().astype("float32").tolist()
     result = reader.Compute(flat)
     return np.array(list(result))

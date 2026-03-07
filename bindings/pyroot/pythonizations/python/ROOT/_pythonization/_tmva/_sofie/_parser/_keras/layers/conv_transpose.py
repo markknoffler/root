@@ -3,7 +3,7 @@ import math
 from .. import get_keras_version
 
 
-# handles the Conv2DTranspose layer (sometimes called deconvolution)
+# handles the Conv2DTranspose layer 
 # its basically the reverse of a regular conv, used a lot in upsampling / generative models
 def MakeKerasConvTranspose(layer):
     from ROOT.TMVA.Experimental import SOFIE
@@ -25,12 +25,11 @@ def MakeKerasConvTranspose(layer):
     fBiasName = fWeightNames[1] if len(fWeightNames) > 1 else ""
 
     fAttrDilations = list(attributes["dilation_rate"])
-    fAttrGroup = int(attributes["groups"])
+    fAttrGroup = int(attributes.get("groups", attributes.get("group", 1)))
     fAttrKernelShape = list(attributes["kernel_size"])
     fAttrStrides = list(attributes["strides"])
     fKerasPadding = str(attributes["padding"])
 
-    # keras doesn't expose output_padding directly so just set it to zero
     fAttrOutputPadding = [0, 0]
     fAttrOutputShape = []
 
@@ -46,7 +45,6 @@ def MakeKerasConvTranspose(layer):
         else:
             fInputShape = attributes["_build_shapes_dict"]["input_shape"]
 
-        # keras stores input as (batch, H, W, C) - channels last
         inputHeight = fInputShape[1]
         inputWidth = fInputShape[2]
 
