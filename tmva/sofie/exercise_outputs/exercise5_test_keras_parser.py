@@ -12,6 +12,11 @@ except ImportError:
     from tensorflow import keras
     from tensorflow.keras.models import load_model
 
+import ROOT
+ROOT.gSystem.Load("libROOTTMVASofie")
+ROOT.gSystem.Load("libROOTTMVASofieParser")
+ROOT.gSystem.Load("libROOTTMVASofieParsers")
+
 
 MODEL_FILES = [
     "ex5_gru.keras",
