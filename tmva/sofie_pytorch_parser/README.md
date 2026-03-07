@@ -1,6 +1,6 @@
 # SOFIE PyTorch Parser — Python-Native Inference Pipeline
 
-This directory contains a Python-native parser for PyTorch `nn.Module` models built as part of the CERN GSoC 2026 evaluation for the project **"Improving the Keras and PyTorch Parsers for ML Inference in SOFIE"**.
+This directory contains a Python-native parser for PyTorch `nn.Module` models.
 
 The parser translates trained PyTorch models directly into SOFIE's intermediate representation without going through the deprecated `torch.onnx.utils._model_to_graph` path that the original C++ parser relies on. It generates JSON output that feeds into the existing `RModelParser_PyTorch.cxx` C++ interface, which then produces standalone C++ inference headers (`.hxx`) — the same output that SOFIE produces for every other parser.
 
