@@ -43,18 +43,16 @@ def parse_and_generate(model_path, batch_size):
     return hxx_path
 
 
-def sofie_infer(model_path, x, batch_size):
+def sofie_infer(hxx_path, dat_path, x):
     import ROOT
-    input_shape = list(x.shape)
-    reader = ROOT.TMVA.Experimental.RSofieReader()
-    shapes = ROOT.std.vector["std::vector<size_t>"]()
-    s = ROOT.std.vector["size_t"]()
-    for d in input_shape:
-        s.push_back(d)
-    shapes.push_back(s)
-    reader.Load(model_path, shapes)
-    flat = x.flatten().astype("float32").tolist()
-    result = reader.Compute(flat)
+    ROOT.gInterpreter.Declare(f'#include "{hxx_path}"')
+    session_class = hxx_path.replace("_sofie.hxx", "").replace("-", "_")
+    # the generated namespace is TMVA_SOFIE_<modelname>
+    model_name = os.path.splitext(os.path.basename(hxx_path))[0].replace("_sofie", "")
+    ns = "TMVA_SOFIE_" + model_name
+    session = getattr(ROOT, ns).Session(dat_path)
+    flat = x.flatten().astype("float32")
+    result = session.infer(flat)
     return np.array(list(result))
 
 
@@ -65,7 +63,15 @@ def run_test(model_path, x, batch_size):
     keras_out = keras_model.predict(x, verbose=0)
     print(f"  keras output shape: {keras_out.shape}")
 
-    sofie_out = sofie_infer(model_path, x, batch_size)
+    base = os.path.splitext(os.path.basename(model_path))[0]
+    hxx_path = base + "_sofie.hxx"
+    dat_path = base + "_sofie.dat"
+
+    if not os.path.exists(hxx_path) or not os.path.exists(dat_path):
+        print(f"  SKIPPED - header not found ({hxx_path}), run parse-only tests first")
+        return
+
+    sofie_out = sofie_infer(hxx_path, dat_path, x)
     print(f"  sofie output size:  {sofie_out.size}")
 
     n = keras_out.size
