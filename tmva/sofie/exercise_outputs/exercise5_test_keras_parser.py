@@ -14,7 +14,6 @@ except ImportError:
 
 import ROOT
 ROOT.gSystem.Load("libROOTTMVASofie")
-ROOT.gSystem.Load("libROOTTMVASofieParser")
 ROOT.gInterpreter.Declare('#include "TMVA/RSofieReader.hxx"')
 
 
