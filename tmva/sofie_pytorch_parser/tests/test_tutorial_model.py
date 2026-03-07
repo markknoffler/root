@@ -3,15 +3,16 @@ Demo: Parse the same PyTorchModel.pt that TMVA_SOFIE_PyTorch.C generates
 but using our new Python parser instead of the old _model_to_graph path.
 """
 import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
+
+_repo = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../.."))
+sys.path.insert(0, os.path.join(_repo, "bindings/pyroot/pythonizations/python/ROOT/_pythonization/_tmva/_sofie/_parser"))
 
 import torch
 import torch.nn as nn
 import numpy as np
-from tmva.sofie_pytorch_parser.core.parser import SOFIEPyTorchParser
-from tmva.sofie_pytorch_parser.core.exporter import export_json
+from _pytorch import PyTorch, export_json
 
-OUT = "tmva/sofie/exercise3_outputs"
+OUT = os.path.join(_repo, "tmva/sofie/exercise3_outputs")
 
 # ── Recreate the exact same model the C++ tutorial builds ───────────────────
 print("Recreating PyTorchModel (Linear32→16→ReLU→Linear16→8→ReLU)...")
@@ -29,8 +30,7 @@ torch.jit.save(scripted, f"{OUT}/TutorialModel_newparser.pt")
 
 # ── Parse with our new Python parser ────────────────────────────────────────
 print("Parsing with new SOFIEPyTorchParser...")
-parser = SOFIEPyTorchParser()
-parsed = parser.parse(model, input_shape=(2, 32))
+parsed = PyTorch.Parse(model, input_shape=(2, 32))
 export_json(parsed, f"{OUT}/TutorialModel_newparser.json")
 
 print(f"\nOperators found: {[op['nodeType'] for op in parsed['operators']]}")
