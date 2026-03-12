@@ -126,9 +126,26 @@ def add_layer_into_RModel(rmodel, layer_data):
     return rmodel
 
 
+def _get_dense_weights_from_keras(keras_model, layer_name):
+    w_arr = None
+    b_arr = None
+    for layer in keras_model.layers:
+        if getattr(layer, "name", None) == layer_name:
+            try:
+                weights = layer.get_weights()
+                if len(weights) >= 1:
+                    w_arr = np.asarray(weights[0], dtype="float32")
+                if len(weights) >= 2:
+                    b_arr = np.asarray(weights[1], dtype="float32").flatten()
+            except Exception:
+                pass
+            break
+    return w_arr, b_arr
+
+
 class PyHLS4ML:
     @staticmethod
-    def ParseFromModelGraph(hls_model, name=None):
+    def ParseFromModelGraph(hls_model, name=None, keras_model=None):
         cfg = extract_hls_config(hls_model)
         model_name = name or cfg.get("name", "HLS4MLModel")
         parsetime = time.asctime(time.gmtime(time.time()))
@@ -163,22 +180,48 @@ class PyHLS4ML:
             if layer_data is None or layer_data["layerType"] == "Input":
                 continue
             if layer_data["layerType"] == "Dense":
-                try:
-                    wdict = hls_layer.get_weights()
-                except Exception:
-                    wdict = {}
                 w_arr = None
                 b_arr = None
-                if isinstance(wdict, dict):
-                    for k, v in wdict.items():
-                        ks = str(k).lower()
-                        if "weight" in ks or "kernel" in ks:
-                            w_arr = np.asarray(v, dtype="float32")
-                        if "bias" in ks:
-                            b_arr = np.asarray(v, dtype="float32").flatten()
+                wdict = {}
+                if hasattr(hls_layer, "get_weights"):
+                    try:
+                        w = hls_layer.get_weights()
+                        if isinstance(w, dict):
+                            wdict = w
+                        elif isinstance(w, (list, tuple)) and len(w) >= 1:
+                            wdict = {"weight": w[0], "bias": w[1] if len(w) > 1 else None}
+                    except Exception:
+                        pass
+                if hasattr(hls_layer, "weights") and not wdict:
+                    try:
+                        wattr = hls_layer.weights
+                        if hasattr(wattr, "items"):
+                            wdict = dict(wattr)
+                        elif hasattr(wattr, "values"):
+                            vals = list(wattr.values())
+                            if len(vals) >= 1:
+                                wdict = {"weight": vals[0], "bias": vals[1] if len(vals) > 1 else None}
+                    except Exception:
+                        pass
+                for k, v in wdict.items():
+                    if v is None:
+                        continue
+                    ks = str(k).lower()
+                    if "weight" in ks or "kernel" in ks or "w" == ks:
+                        w_arr = np.asarray(v, dtype="float32").copy()
+                        break
+                for k, v in wdict.items():
+                    if v is None:
+                        continue
+                    ks = str(k).lower()
+                    if "bias" in ks or "b" == ks:
+                        b_arr = np.asarray(v, dtype="float32").flatten()
+                        break
                 lname = layer_data["layerAttributes"]["name"]
+                if w_arr is None and keras_model is not None:
+                    w_arr, b_arr = _get_dense_weights_from_keras(keras_model, lname)
                 if w_arr is None:
-                    raise RuntimeError("Dense layer " + lname + " has no weights")
+                    raise RuntimeError("Dense layer " + lname + " has no weights (pass keras_model= for Keras-sourced HLS4ML)")
                 if b_arr is None:
                     b_arr = np.zeros(w_arr.shape[0], dtype="float32")
                 rmodel.AddInitializedTensor["float"](lname + "_W", list(w_arr.shape), w_arr.data)
