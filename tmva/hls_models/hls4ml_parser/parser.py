@@ -111,11 +111,11 @@ def add_layer_into_RModel(rmodel, layer_data):
         target = attrs.get("target_shape")
         if target is None:
             target = [-1]
-        target = np.asarray(target, dtype="int64")
+        target = np.ascontiguousarray(np.asarray(target, dtype="int64"))
         if fLayerType == "Flatten":
-            target = np.asarray([-1], dtype="int64")
+            target = np.ascontiguousarray(np.asarray([-1], dtype="int64"))
         shape_name = name + "_shape"
-        rmodel.AddInitializedTensor["int64_t"](shape_name, [len(target)], target.data)
+        rmodel.AddInitializedTensor["int64_t"](shape_name, [len(target)], target)
     if fLayerType not in mapHLS4MLLayer and fLayerType != "Activation":
         return rmodel
     if fLayerType == "Activation":
@@ -237,8 +237,10 @@ class PyHLS4ML:
                     raise RuntimeError("Dense layer " + lname + " has no weights (pass keras_model= for Keras-sourced HLS4ML)")
                 if b_arr is None:
                     b_arr = np.zeros(w_arr.shape[0], dtype="float32")
-                rmodel.AddInitializedTensor["float"](lname + "_W", list(w_arr.shape), w_arr.data)
-                rmodel.AddInitializedTensor["float"](lname + "_B", [len(b_arr)], b_arr.data)
+                w_flat = np.ascontiguousarray(w_arr.flatten(), dtype="float32")
+                b_flat = np.ascontiguousarray(b_arr.flatten(), dtype="float32")
+                rmodel.AddInitializedTensor["float"](lname + "_W", list(w_arr.shape), w_flat)
+                rmodel.AddInitializedTensor["float"](lname + "_B", [len(b_flat)], b_flat)
             rmodel = add_layer_into_RModel(rmodel, layer_data)
 
         output_names = cfg.get("outputs", [])
