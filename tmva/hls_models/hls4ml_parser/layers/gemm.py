@@ -13,7 +13,7 @@ def MakeHLSGemm(layer):
     attr_alpha = 1.0
     attr_beta = 1.0
     attr_transA = 0
-    attr_transB = 1
+    attr_transB = 0  # Keras/HLS4ML Dense weights are [in, out]; Y = X @ W
     if SOFIE.ConvertStringToType(fLayerDType) == SOFIE.ETensorType.FLOAT:
         op = SOFIE.ROperator_Gemm["float"](
             attr_alpha, attr_beta, attr_transA, attr_transB, fLayerInputName, fKernelName, fBiasName, fLayerOutputName
