@@ -14,33 +14,55 @@ from qonnx.util.cleanup import cleanup_model
 from tmva.hls_models.hls4ml_parser.config import extract_hls_config
 
 
+def _add_conv_dilations(onnx_path):
+    import onnx
+    model = onnx.load(onnx_path)
+    for node in model.graph.node:
+        if node.op_type == "Conv":
+            if not any(a.name == "dilations" for a in node.attribute):
+                kernel_shape = None
+                for a in node.attribute:
+                    if a.name == "kernel_shape":
+                        kernel_shape = list(a.ints)
+                        break
+                nd = len(kernel_shape) if kernel_shape else 2
+                dilations = [1] * nd
+                node.attribute.append(onnx.helper.make_attribute("dilations", dilations))
+    fd, tmp_path = tempfile.mkstemp(suffix=".onnx")
+    os.close(fd)
+    try:
+        onnx.save(model, tmp_path)
+        return tmp_path
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+
+
 def _convert_to_channels_last(onnx_path):
+    preprocessed = _add_conv_dilations(onnx_path)
     try:
-        from qonnx.transformation.channels_last import ConvertToChannelsLastAndClean
-        model_wrapper = ModelWrapper(onnx_path)
+        try:
+            from qonnx.transformation.channels_last import ConvertToChannelsLastAndClean
+        except ImportError:
+            from qonnx.transformation.general import ConvertToChannelsLastAndClean
+        model_wrapper = ModelWrapper(preprocessed)
         model_wrapper = cleanup_model(model_wrapper)
         model_wrapper = model_wrapper.transform(ConvertToChannelsLastAndClean())
         model_wrapper = cleanup_model(model_wrapper)
         return model_wrapper
     except ImportError:
-        pass
-    try:
-        from qonnx.transformation.general import ConvertToChannelsLastAndClean
-        model_wrapper = ModelWrapper(onnx_path)
-        model_wrapper = cleanup_model(model_wrapper)
-        model_wrapper = model_wrapper.transform(ConvertToChannelsLastAndClean())
-        model_wrapper = cleanup_model(model_wrapper)
-        return model_wrapper
-    except ImportError:
-        pass
-    with tempfile.TemporaryDirectory() as td:
-        clean1 = os.path.join(td, "clean1.onnx")
-        cl = os.path.join(td, "channels_last.onnx")
-        clean2 = os.path.join(td, "clean2.onnx")
-        subprocess.run(["qonnx_clean", onnx_path, "-o", clean1], check=True)
-        subprocess.run(["qonnx_to_channels_last", clean1, "-o", cl], check=True)
-        subprocess.run(["qonnx_clean", cl, "-o", clean2], check=True)
-        return ModelWrapper(clean2)
+        with tempfile.TemporaryDirectory() as td:
+            clean1 = os.path.join(td, "clean1.onnx")
+            cl = os.path.join(td, "channels_last.onnx")
+            clean2 = os.path.join(td, "clean2.onnx")
+            subprocess.run(["qonnx_clean", preprocessed, "-o", clean1], check=True)
+            subprocess.run(["qonnx_to_channels_last", clean1, "-o", cl], check=True)
+            subprocess.run(["qonnx_clean", cl, "-o", clean2], check=True)
+            return ModelWrapper(clean2)
+    finally:
+        if os.path.exists(preprocessed):
+            os.unlink(preprocessed)
 
 
 def main():
