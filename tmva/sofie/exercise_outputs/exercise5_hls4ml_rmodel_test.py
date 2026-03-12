@@ -39,7 +39,7 @@ def main():
     if hasattr(hls_model, "get_layers"):
         print("hls4ml layers:", [l.name for l in hls_model.get_layers()])
 
-    rmodel = PyHLS4ML.ParseFromModelGraph(hls_model, name="HLS4MLDenseModel")
+    rmodel = PyHLS4ML.ParseFromModelGraph(hls_model, name="HLS4MLDenseModel", keras_model=model)
 
     rmodel.Generate()
     header_path = os.path.join(out_dir, "HLS4MLDenseModel_sofie.hxx")
