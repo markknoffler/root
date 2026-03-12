@@ -1,0 +1,10 @@
+hls4ml model type: ModelGraph
+hls4ml layers: ['global_in', 'Conv2D_Conv_0', 'Transpose_1']
+
+hls4ml config keys: ['name', 'layers', 'weights', 'inputs', 'outputs']
+model name: hls_model
+num layers: 3
+layer names: ['global_in', 'Conv2D_Conv_0', 'Transpose_1']
+num weights: 0
+inputs: ['global_in']
+outputs: ['global_out']
