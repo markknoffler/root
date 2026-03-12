@@ -39,6 +39,18 @@ print(f"\nJSON written to {OUT}/TutorialModel_newparser.json")
 print("\nThis JSON can now be passed to ParseFromPython() in C++ to generate")
 print("identical inference code to what TMVA_SOFIE_PyTorch.C produces.")
 
+# Optional: If ROOT/SOFIE available, also build RModel directly in Python (no JSON)
+try:
+    from tmva.sofie_pytorch_parser import parse_to_rmodel
+    import ROOT
+    ROOT.gSystem.Load("libROOTTMVASofie")
+    rmodel = parse_to_rmodel(model, input_shape=(2, 32), model_name="TutorialModel_PythonRModel")
+    rmodel.Generate()
+    rmodel.OutputGenerated(f"{OUT}/TutorialModel_PythonRModel.hxx")
+    print("\n[Python RModel] Also generated TutorialModel_PythonRModel.hxx via parse_to_rmodel (no JSON)")
+except Exception as e:
+    print("\n[Python RModel] Skipped (ROOT not available):", e)
+
 # ── Verify output shape ──────────────────────────────────────────────────────
 x = torch.randn(2, 32)
 with torch.no_grad():

@@ -119,3 +119,28 @@ class SOFIEPyTorchParser:
             "outputs":      {current: None},
         }
 
+
+def parse_to_rmodel(
+    model: nn.Module,
+    input_shape: Tuple,
+    model_name: str = "PyTorchModel",
+    input_name: str = "input_0",
+):
+    """
+    Parse a PyTorch nn.Module and build SOFIE RModel directly in Python.
+    Mirrors Keras parser: dictionary → RModel via PyROOT, no JSON or C++.
+
+    Args:
+        model: Trained nn.Module (must be in eval mode)
+        input_shape: Full shape with batch dim, e.g. (1, 32) or (1, 3, 224, 224)
+        model_name: Name for the RModel
+        input_name: Name for the primary input tensor
+
+    Returns:
+        SOFIE.RModel ready for Generate() and OutputGenerated()
+    """
+    from .rmodel_builder import build_rmodel
+    parser = SOFIEPyTorchParser()
+    parsed = parser.parse(model, input_shape, input_name)
+    return build_rmodel(parsed, model_name)
+

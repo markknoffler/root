@@ -12,7 +12,10 @@ SOFIE (System for Optimized Fast Inference code Emit) lives inside ROOT's TMVA m
 
 The existing PyTorch parser in `RModelParser_PyTorch.cxx` operates on TorchScript `.pt` files: it loads the model with `torch.jit.load()`, builds dummy inputs matching each input shape, passes them through `_model_to_graph()` to obtain an ONNX graph, and then walks that graph node by node. This path works for TorchScript-saved models and runs entirely through C++.
 
-The Keras parser, by contrast, can be invoked directly from Python — you pass a live model object to the parser and get an `RModel` back, all inside a Python script. This work extends that same idea to PyTorch: a Python parser that works directly on a live `nn.Module`, with no `.pt` file required. The C++ side was extended with `ParseFromPython()` so the output JSON still flows through the full SOFIE `RModel` → `Generate()` → `.hxx` pipeline, maintaining full compatibility with the existing C++ infrastructure.
+The Keras parser, by contrast, can be invoked directly from Python — you pass a live model object to the parser and get an `RModel` back, all inside a Python script. This work extends that same idea to PyTorch in two ways:
+
+1. **JSON path (backwards compatible)** — The Python parser produces a JSON file that `ParseFromPython()` in C++ reads. This maintains compatibility with the existing C++ infrastructure.
+2. **Dictionary path (Keras-style)** — The parser can build an `RModel` directly in Python using only a dictionary and PyROOT, with no JSON or C++ involvement. This mirrors the Keras parser's direct Python → RModel flow.
 
 ---
 
@@ -53,6 +56,30 @@ The existing C++ parser was extended with:
 
 These new `Make*` functions follow the same pattern as the existing ones (`MakePyTorchGemm`, `MakePyTorchConv`, etc.) and are registered in `mapPyTorchNode` so they work for both the original `.pt` TorchScript path and the new JSON path.
 
+### Python-Native RModel Construction (Dictionary Path)
+
+To mirror the Keras parser's direct Python usage, the PyTorch parser can build an `RModel` entirely in Python, without JSON or C++:
+
+- **`parse_to_rmodel(model, input_shape, model_name=..., input_name=...)`** — Parses a live `nn.Module`, builds the internal configuration dictionary, and constructs an `RModel` via PyROOT. Returns an `RModel` ready for `Generate()` and `OutputGenerated()`.
+- **`build_rmodel(parsed, model_name)`** — Builds an `RModel` from an already-parsed dictionary (the output of `SOFIEPyTorchParser.parse()`). Used internally by `parse_to_rmodel` but can be called directly if you have a parsed dict.
+
+The implementation lives in `core/rmodel_builder.py`. It maps each node type (e.g. `onnx::Gemm`, `onnx::Relu`) to a Python function that instantiates the corresponding `ROperator_*` via PyROOT and adds it to the `RModel`. All supported operators (Gemm, Relu, Sigmoid, Elu, Conv, MaxPool, BatchNorm, RNN, LSTM, GRU) are supported on this path.
+
+**Example (Python-only, no JSON):**
+```python
+from tmva.sofie_pytorch_parser import parse_to_rmodel
+import torch.nn as nn
+
+model = nn.Sequential(nn.Linear(32, 16), nn.ReLU(), nn.Linear(16, 8))
+model.eval()
+
+rmodel = parse_to_rmodel(model, input_shape=(1, 32), model_name="MyModel")
+rmodel.Generate()
+rmodel.OutputGenerated("MyModel.hxx")
+```
+
+The JSON path (`export_json` → `ParseFromPython` in C++) remains fully supported and is unchanged.
+
 ---
 
 ## Directory Structure
@@ -63,7 +90,10 @@ tmva/sofie_pytorch_parser/
 ├── core/
 │   ├── parser.py          Main orchestrator — walks nn.Module tree,
 │   │                      dispatches to per-operator parsers, collects
-│   │                      nodeData dicts and initializer tensors
+│   │                      nodeData dicts and initializer tensors.
+│   │                      Provides parse_to_rmodel() for direct Python RModel build
+│   ├── rmodel_builder.py  Builds SOFIE RModel from parsed dict via PyROOT
+│   │                      (no JSON, no C++) — mirrors Keras parser flow
 │   └── exporter.py        Serialises parsed result to JSON in the format
 │                          expected by ParseFromPython() in C++
 │
@@ -97,6 +127,7 @@ tmva/sofie_pytorch_parser/
 └── tests/
     ├── test_exercise4.py      Python tests — one test per operator, all must pass
     ├── test_tutorial_model.py Demo using the exact same model from TMVA_SOFIE_PyTorch.C
+    ├── test_parse_to_rmodel.py Tests dictionary-based parse_to_rmodel (Python → RModel, no JSON)
     └── test_cpp_pipeline.C    ROOT macro — calls ParseFromPython() in C++ and
                                generates .hxx files for GRU, LSTM, and dense models
 ```
@@ -162,7 +193,16 @@ python tmva/sofie_pytorch_parser/tests/test_tutorial_model.py \
   2>&1 | tee tmva/sofie/exercise_outputs/exercise4_tutorial_demo_output.txt
 ```
 
-This recreates the same `nn.Sequential(Linear→ReLU→Linear→ReLU)` model that `TMVA_SOFIE_PyTorch.C` uses, parses it through the new Python parser, and exports a JSON file. This demonstrates backwards compatibility — the new Python parser produces the same graph structure and weight layout as the original C++ TorchScript path, and the same C++ operator handlers (`MakePyTorchGemm`, `MakePyTorchRelu`) process both.
+This recreates the same `nn.Sequential(Linear→ReLU→Linear→ReLU)` model that `TMVA_SOFIE_PyTorch.C` uses, parses it through the new Python parser, and exports a JSON file. If ROOT/SOFIE is available, it also builds the RModel directly via `parse_to_rmodel` and generates `TutorialModel_PythonRModel.hxx`. This demonstrates both the JSON path and the dictionary-based Python RModel path.
+
+### Python RModel path (parse_to_rmodel)
+
+```bash
+source /path/to/root-build/bin/thisroot.sh
+python tmva/sofie_pytorch_parser/tests/test_parse_to_rmodel.py
+```
+
+This tests the dictionary-based flow: `parse_to_rmodel` parses a live `nn.Module`, builds an `RModel` in Python via PyROOT, and generates `.hxx` and `.dat` files. No JSON file is created. Requires ROOT with SOFIE.
 
 ### C++ inference pipeline
 
