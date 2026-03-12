@@ -1,7 +1,7 @@
 import os
 import sys
 
-_repo = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_repo = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, _repo)
 
 import ROOT
