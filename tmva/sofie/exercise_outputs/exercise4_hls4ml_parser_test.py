@@ -5,7 +5,9 @@ _repo = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "..
 sys.path.insert(0, _repo)
 
 import hls4ml
-import onnx
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.util.cleanup import cleanup_model
+from qonnx.transformation.general import ConvertToChannelsLastAndClean
 
 from tmva.hls_models.hls4ml_parser.config import extract_hls_config
 
@@ -15,8 +17,12 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     onnx_path = os.path.join(_repo, "tmva", "hls_models", "ConvWithAsymmetricPadding.onnx")
-    model = onnx.load(onnx_path)
-    hls_model = hls4ml.converters.convert_from_onnx_model(model)
+    model_wrapper = ModelWrapper(onnx_path)
+    model_wrapper = cleanup_model(model_wrapper)
+    model_wrapper = model_wrapper.transform(ConvertToChannelsLastAndClean())
+    model_wrapper = cleanup_model(model_wrapper)
+    config = hls4ml.utils.config_from_onnx_model(model_wrapper, granularity="name")
+    hls_model = hls4ml.converters.convert_from_onnx_model(model_wrapper, hls_config=config)
 
     cfg = extract_hls_config(hls_model)
 
