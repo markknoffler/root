@@ -14,7 +14,7 @@ from qonnx.util.cleanup import cleanup_model
 from tmva.hls_models.hls4ml_parser.config import extract_hls_config
 
 
-def _add_conv_dilations(onnx_path):
+def _add_conv_defaults(onnx_path):
     import onnx
     model = onnx.load(onnx_path)
     for node in model.graph.node:
@@ -26,8 +26,9 @@ def _add_conv_dilations(onnx_path):
                         kernel_shape = list(a.ints)
                         break
                 nd = len(kernel_shape) if kernel_shape else 2
-                dilations = [1] * nd
-                node.attribute.append(onnx.helper.make_attribute("dilations", dilations))
+                node.attribute.append(onnx.helper.make_attribute("dilations", [1] * nd))
+            if not any(a.name == "group" for a in node.attribute):
+                node.attribute.append(onnx.helper.make_attribute("group", 1))
     fd, tmp_path = tempfile.mkstemp(suffix=".onnx")
     os.close(fd)
     try:
@@ -40,7 +41,7 @@ def _add_conv_dilations(onnx_path):
 
 
 def _convert_to_channels_last(onnx_path):
-    preprocessed = _add_conv_dilations(onnx_path)
+    preprocessed = _add_conv_defaults(onnx_path)
     try:
         try:
             from qonnx.transformation.channels_last import ConvertToChannelsLastAndClean
