@@ -4,6 +4,7 @@ import sys
 _repo = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, _repo)
 
+import numpy as np
 import ROOT
 ROOT.gSystem.Load("libROOTTMVASofie")
 from ROOT.TMVA.Experimental import SOFIE
@@ -49,6 +50,16 @@ def main():
 
     print("generated header:", header_path)
     print("generated data:", data_path)
+
+    ROOT.gInterpreter.Declare('#include "' + header_path + '"')
+    session = getattr(ROOT, "TMVA_SOFIE_HLS4MLDenseModel").Session(data_path)
+    x = np.random.randn(1, 8).astype(np.float32)
+    y_sofie = session.infer(x)
+    y_keras = model(x)
+    diff = np.abs(np.array(y_sofie).flatten() - np.array(y_keras).flatten())
+    print("inference (sample input): SOFIE output =", list(y_sofie))
+    print("inference (same input):   Keras output =", y_keras.numpy().tolist())
+    print("max abs diff:", float(np.max(diff)))
 
 
 if __name__ == "__main__":
