@@ -4,12 +4,43 @@ import sys
 _repo = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, _repo)
 
+import subprocess
+import tempfile
+
 import hls4ml
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.cleanup import cleanup_model
-from qonnx.transformation.general import ConvertToChannelsLastAndClean
 
 from tmva.hls_models.hls4ml_parser.config import extract_hls_config
+
+
+def _convert_to_channels_last(onnx_path):
+    try:
+        from qonnx.transformation.channels_last import ConvertToChannelsLastAndClean
+        model_wrapper = ModelWrapper(onnx_path)
+        model_wrapper = cleanup_model(model_wrapper)
+        model_wrapper = model_wrapper.transform(ConvertToChannelsLastAndClean())
+        model_wrapper = cleanup_model(model_wrapper)
+        return model_wrapper
+    except ImportError:
+        pass
+    try:
+        from qonnx.transformation.general import ConvertToChannelsLastAndClean
+        model_wrapper = ModelWrapper(onnx_path)
+        model_wrapper = cleanup_model(model_wrapper)
+        model_wrapper = model_wrapper.transform(ConvertToChannelsLastAndClean())
+        model_wrapper = cleanup_model(model_wrapper)
+        return model_wrapper
+    except ImportError:
+        pass
+    with tempfile.TemporaryDirectory() as td:
+        clean1 = os.path.join(td, "clean1.onnx")
+        cl = os.path.join(td, "channels_last.onnx")
+        clean2 = os.path.join(td, "clean2.onnx")
+        subprocess.run(["qonnx_clean", onnx_path, "-o", clean1], check=True)
+        subprocess.run(["qonnx_to_channels_last", clean1, "-o", cl], check=True)
+        subprocess.run(["qonnx_clean", cl, "-o", clean2], check=True)
+        return ModelWrapper(clean2)
 
 
 def main():
@@ -17,10 +48,7 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     onnx_path = os.path.join(_repo, "tmva", "hls_models", "ConvWithAsymmetricPadding.onnx")
-    model_wrapper = ModelWrapper(onnx_path)
-    model_wrapper = cleanup_model(model_wrapper)
-    model_wrapper = model_wrapper.transform(ConvertToChannelsLastAndClean())
-    model_wrapper = cleanup_model(model_wrapper)
+    model_wrapper = _convert_to_channels_last(onnx_path)
     config = hls4ml.utils.config_from_onnx_model(model_wrapper, granularity="name")
     hls_model = hls4ml.converters.convert_from_onnx_model(model_wrapper, hls_config=config)
 
