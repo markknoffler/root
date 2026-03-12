@@ -44,8 +44,7 @@ def main():
     rmodel.Generate()
     header_path = os.path.join(out_dir, "HLS4MLDenseModel_sofie.hxx")
     data_path = os.path.join(out_dir, "HLS4MLDenseModel_sofie.dat")
-    rmodel.OutputGenerated(header_path)
-    rmodel.OutputTensorFile(data_path)
+    rmodel.OutputGenerated(header_path)  # writes .hxx and .dat
 
     print("generated header:", header_path)
     print("generated data:", data_path)
