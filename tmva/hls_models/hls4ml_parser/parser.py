@@ -203,19 +203,32 @@ class PyHLS4ML:
                                 wdict = {"weight": vals[0], "bias": vals[1] if len(vals) > 1 else None}
                     except Exception:
                         pass
+                def _to_numpy(x):
+                    if x is None:
+                        return None
+                    if hasattr(x, "value"):
+                        x = x.value
+                    if hasattr(x, "data"):
+                        x = x.data
+                    return np.asarray(x, dtype="float32")
+
                 for k, v in wdict.items():
                     if v is None:
                         continue
                     ks = str(k).lower()
                     if "weight" in ks or "kernel" in ks or "w" == ks:
-                        w_arr = np.asarray(v, dtype="float32").copy()
+                        w_arr = _to_numpy(v)
+                        if w_arr is not None:
+                            w_arr = w_arr.copy()
                         break
                 for k, v in wdict.items():
                     if v is None:
                         continue
                     ks = str(k).lower()
                     if "bias" in ks or "b" == ks:
-                        b_arr = np.asarray(v, dtype="float32").flatten()
+                        b_arr = _to_numpy(v)
+                        if b_arr is not None:
+                            b_arr = b_arr.flatten()
                         break
                 lname = layer_data["layerAttributes"]["name"]
                 if w_arr is None and keras_model is not None:
