@@ -3,15 +3,15 @@ Test parse_to_rmodel — Dictionary-based Python → RModel (no JSON, no C++).
 Demonstrates direct PyTorch → SOFIE flow, mirroring Keras parser behavior.
 Run: python tmva/sofie_pytorch_parser/tests/test_parse_to_rmodel.py
 Requires: ROOT with SOFIE, PyTorch
+
+IMPORTANT: ROOT must be imported before PyTorch to avoid segfaults from
+library loading order conflicts.
 """
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-import torch
-import torch.nn as nn
-
-# ROOT and SOFIE must be available
+# Load ROOT/SOFIE first (before PyTorch) to avoid segfaults
 try:
     import ROOT
     ROOT.gSystem.Load("libROOTTMVASofie")
@@ -20,6 +20,8 @@ except Exception as e:
     print("SKIP: ROOT/SOFIE not available:", e)
     sys.exit(0)
 
+import torch
+import torch.nn as nn
 from tmva.sofie_pytorch_parser import parse_to_rmodel
 
 _repo = os.path.normpath(os.path.join(os.path.dirname(__file__), "../..", ".."))

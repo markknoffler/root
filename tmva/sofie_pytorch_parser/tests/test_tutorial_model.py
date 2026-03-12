@@ -2,8 +2,18 @@
 Demo: Parse the same PyTorchModel.pt that TMVA_SOFIE_PyTorch.C generates
 but using our new Python parser instead of the old _model_to_graph path.
 """
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
+
+# Load ROOT first (before PyTorch) to avoid segfaults when using parse_to_rmodel
+_root_ok = False
+try:
+    import ROOT
+    ROOT.gSystem.Load("libROOTTMVASofie")
+    _root_ok = True
+except Exception:
+    pass
 
 import torch
 import torch.nn as nn
@@ -39,17 +49,18 @@ print(f"\nJSON written to {OUT}/TutorialModel_newparser.json")
 print("\nThis JSON can now be passed to ParseFromPython() in C++ to generate")
 print("identical inference code to what TMVA_SOFIE_PyTorch.C produces.")
 
-# Optional: If ROOT/SOFIE available, also build RModel directly in Python (no JSON)
-try:
-    from tmva.sofie_pytorch_parser import parse_to_rmodel
-    import ROOT
-    ROOT.gSystem.Load("libROOTTMVASofie")
-    rmodel = parse_to_rmodel(model, input_shape=(2, 32), model_name="TutorialModel_PythonRModel")
-    rmodel.Generate()
-    rmodel.OutputGenerated(f"{OUT}/TutorialModel_PythonRModel.hxx")
-    print("\n[Python RModel] Also generated TutorialModel_PythonRModel.hxx via parse_to_rmodel (no JSON)")
-except Exception as e:
-    print("\n[Python RModel] Skipped (ROOT not available):", e)
+# Optional: If ROOT/SOFIE was loaded at top, also build RModel directly (no JSON)
+if _root_ok:
+    try:
+        from tmva.sofie_pytorch_parser import parse_to_rmodel
+        rmodel = parse_to_rmodel(model, input_shape=(2, 32), model_name="TutorialModel_PythonRModel")
+        rmodel.Generate()
+        rmodel.OutputGenerated(f"{OUT}/TutorialModel_PythonRModel.hxx")
+        print("\n[Python RModel] Also generated TutorialModel_PythonRModel.hxx via parse_to_rmodel (no JSON)")
+    except Exception as e:
+        print("\n[Python RModel] Failed:", e)
+else:
+    print("\n[Python RModel] Skipped (ROOT not loaded — import ROOT before torch to enable)")
 
 # ── Verify output shape ──────────────────────────────────────────────────────
 x = torch.randn(2, 32)

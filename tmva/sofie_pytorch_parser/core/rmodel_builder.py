@@ -205,8 +205,9 @@ def build_rmodel(
                 node["nodeInputs"].append(nameB)
 
     for name, arr in initializers.items():
-        shape = list(arr.shape) if hasattr(arr, "shape") else [len(arr)]
-        arr_flat = np.ascontiguousarray(np.asarray(arr, dtype=np.float32).flatten())
+        arr = np.asarray(arr, dtype=np.float32)
+        shape = list(arr.shape)
+        arr_flat = np.ascontiguousarray(arr.flatten().copy())
         rmodel.AddInitializedTensor["float"](name, shape, arr_flat)
 
     for node in operators:
