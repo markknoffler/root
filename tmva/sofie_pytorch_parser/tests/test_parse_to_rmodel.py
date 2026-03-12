@@ -9,7 +9,7 @@ library loading order conflicts.
 """
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 # Load ROOT/SOFIE first (before PyTorch) to avoid segfaults
 try:
