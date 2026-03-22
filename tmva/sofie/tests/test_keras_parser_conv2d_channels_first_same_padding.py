@@ -39,13 +39,16 @@ class TestKerasParserConv2DChannelsFirstSamePadding(unittest.TestCase):
     """
 
     def test_conv2d_channels_first_same_padding_matches_keras(self):
+        # Use (2, 5, 5): C=2, H=5, W=5. With kernel 3, stride 2, the bug uses (C,H)=(2,5)
+        # instead of (H,W)=(5,5), producing wrong padding [0,1,1,1] vs correct [1,1,1,1].
         model = models.Sequential([
-            layers.Input(shape=(3, 8, 8)),
-            layers.Conv2D(4, (3, 3), padding='same', data_format='channels_first', activation='relu')
+            layers.Input(shape=(2, 5, 5)),
+            layers.Conv2D(4, (3, 3), padding='same', strides=(2, 2),
+                         data_format='channels_first', activation='relu')
         ])
         model.compile(optimizer='adam', loss='mean_squared_error')
-        x = np.random.rand(2, 3, 8, 8).astype('float32')
-        y = np.random.rand(2, 4, 8, 8).astype('float32')
+        x = np.random.rand(2, 2, 5, 5).astype('float32')
+        y = np.random.rand(2, 4, 3, 3).astype('float32')
         model.fit(x, y, epochs=1, verbose=0)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -66,7 +69,7 @@ class TestKerasParserConv2DChannelsFirstSamePadding(unittest.TestCase):
             session = SessionClass(dat_path)
 
             keras_model = models.load_model(model_path)
-            input_arr = np.ones((1, 3, 8, 8), dtype='float32')
+            input_arr = np.ones((1, 2, 5, 5), dtype='float32')
             sofie_result = np.asarray(session.infer(input_arr)).flatten()
             keras_result = np.asarray(keras_model(input_arr)).flatten()
 
