@@ -31,21 +31,8 @@ except (ImportError, AttributeError):
     HAS_ROOT = False
 
 
-def _channels_first_supported():
-    try:
-        from keras import backend
-        if backend.backend() == "tensorflow":
-            import tensorflow as tf
-            if len(tf.config.list_physical_devices("GPU")) == 0:
-                return False
-        return True
-    except Exception:
-        return False
-
-
 @unittest.skipIf(not HAS_KERAS, "Keras not available")
 @unittest.skipIf(not HAS_ROOT, "ROOT with PyROOT not available")
-@unittest.skipIf(not _channels_first_supported(), "channels_first not supported on this backend (e.g. TF CPU)")
 class TestKerasParserConv2DChannelsFirstSamePadding(unittest.TestCase):
     """
     Regression test for Conv2D same padding using wrong indices when data_format is channels_first.
