@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
-"""
-Regression test for Conv2D "same" padding + channels_first bug in the Keras parser.
 
-Bug: In conv.py lines 51-52, padding calculation uses fInputShape[1] and fInputShape[2],
-     assuming NHWC (channels_last). For NCHW (channels_first), H and W are at indices
-     2 and 3. Using wrong indices produces incorrect padding and output shape.
-
-This test creates a Conv2D model with padding="same" and data_format="channels_first",
-parses it, generates C++, runs inference, and asserts output matches Keras. When the
-bug exists, SOFIE output shape or values diverge from Keras.
-
-Run with: source root-build/bin/thisroot.sh && python tmva/sofie/tests/test_keras_parser_conv2d_channels_first_same_padding.py -v
-"""
 import os
 import tempfile
 import unittest
@@ -34,13 +22,8 @@ except (ImportError, AttributeError):
 @unittest.skipIf(not HAS_KERAS, "Keras not available")
 @unittest.skipIf(not HAS_ROOT, "ROOT with PyROOT not available")
 class TestKerasParserConv2DChannelsFirstSamePadding(unittest.TestCase):
-    """
-    Regression test for Conv2D same padding using wrong indices when data_format is channels_first.
-    """
 
     def test_conv2d_channels_first_same_padding_matches_keras(self):
-        # Use (2, 5, 5): C=2, H=5, W=5. With kernel 3, stride 2, the bug uses (C,H)=(2,5)
-        # instead of (H,W)=(5,5), producing wrong padding [0,1,1,1] vs correct [1,1,1,1].
         model = models.Sequential([
             layers.Input(shape=(2, 5, 5)),
             layers.Conv2D(4, (3, 3), padding='same', strides=(2, 2),
