@@ -48,12 +48,8 @@ def MakeKerasConv(layer):
             fInputShape = attributes["_build_input_shape"]
         else:
             fInputShape = attributes["_build_shapes_dict"]["input_shape"]
-        if layer.get("channels_last", True):
-            inputHeight = fInputShape[1]
-            inputWidth = fInputShape[2]
-        else:
-            inputHeight = fInputShape[2]
-            inputWidth = fInputShape[3]
+        inputHeight = fInputShape[1]
+        inputWidth = fInputShape[2]
         outputHeight = math.ceil(float(inputHeight) / float(fAttrStrides[0]))
         outputWidth = math.ceil(float(inputWidth) / float(fAttrStrides[1]))
         padding_height = max((outputHeight - 1) * fAttrStrides[0] + fAttrKernelShape[0] - inputHeight, 0)
