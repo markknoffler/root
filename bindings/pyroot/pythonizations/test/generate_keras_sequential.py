@@ -58,11 +58,11 @@ def generate_keras_sequential(dst_dir):
       ])
       train_and_save(model, "Conv2D_channels_first")
 
-      # this case is needed, old bug was coming here only
+    # Conv2D_channels_first_padding_same_stride2
+    if (is_channels_first_supported()):
       model = models.Sequential([
-          layers.Input(shape=(2, 5, 5)),
-          layers.Conv2D(4, (3, 3), padding='same', strides=(2, 2),
-                        data_format='channels_first', activation='relu')
+        layers.Input(shape=(2, 5, 5)),
+        layers.Conv2D(4, (3, 3), padding='same', strides=(2, 2), data_format='channels_first', activation='relu')
       ])
       train_and_save(model, "Conv2D_channels_first_padding_same_stride2")
 

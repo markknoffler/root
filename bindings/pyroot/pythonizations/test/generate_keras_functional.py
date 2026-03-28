@@ -70,9 +70,10 @@ def generate_keras_functional(dst_dir):
       model = models.Model(inp, out)
       train_and_save(model, "Conv2D_channels_first")
 
+    # Conv2D_channels_first_padding_same_stride2
+    if (is_channels_first_supported()):
       inp = layers.Input(shape=(2, 5, 5))
-      out = layers.Conv2D(4, (3, 3), padding='same', strides=(2, 2),
-                          data_format='channels_first', activation='relu')(inp)
+      out = layers.Conv2D(4, (3, 3), padding='same', strides=(2, 2), data_format='channels_first', activation='relu')(inp)
       model = models.Model(inp, out)
       train_and_save(model, "Conv2D_channels_first_padding_same_stride2")
 
