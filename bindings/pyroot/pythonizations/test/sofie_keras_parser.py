@@ -2,9 +2,6 @@ import unittest
 import os
 import shutil
 
-# Local CPU-only TensorFlow: export ROOT_TMVA_SOFIE_KERAS_CPU_CHANNELS_FIRST=1 and
-# CUDA_VISIBLE_DEVICES=-1 so channels_first models (e.g. Conv2D regression) are not skipped.
-
 from parser_test_function import generate_and_test_inference
 from parser_test_function import is_channels_first_supported
 from generate_keras_functional import generate_keras_functional
