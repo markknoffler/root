@@ -14,4 +14,3 @@ from .sigmoid import MakeHLSSigmoid
 from .softmax import MakeHLSSoftmax
 from .swish import MakeHLSSwish
 from .tanh import MakeHLSTanh
-from .thresholdedrelu import MakeHLSThresholdedRelu

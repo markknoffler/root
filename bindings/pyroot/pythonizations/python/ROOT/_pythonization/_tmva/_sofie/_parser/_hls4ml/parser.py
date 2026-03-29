@@ -21,7 +21,6 @@ from .layers.softmax import MakeHLSSoftmax
 from .layers.swish import MakeHLSSwish
 from .layers.leaky_relu import MakeHLSLeakyRelu
 from .layers.selu import MakeHLSSeLU
-from .layers.thresholdedrelu import MakeHLSThresholdedRelu
 
 
 def MakeHLSActivation(layer):
@@ -47,8 +46,6 @@ def MakeHLSActivation(layer):
         return MakeHLSSwish(layer)
     if fLayerActivation == "LeakyReLU":
         return MakeHLSLeakyRelu(layer)
-    if fLayerActivation == "ThresholdedReLU":
-        return MakeHLSThresholdedRelu(layer)
     else:
         raise Exception(
             "TMVA.SOFIE - HLS4ML activation " + fLayerActivation + " is not supported"
@@ -66,15 +63,14 @@ mapHLS4MLLayer = {
     "sigmoid": MakeHLSSigmoid,
     "Tanh": MakeHLSTanh,
     "tanh": MakeHLSTanh,
-    "LeakyReLU": MakeHLSLeakyRelu,
     "leaky_relu": MakeHLSLeakyRelu,
-    "ThresholdedReLU": MakeHLSThresholdedRelu,
     "Softmax": MakeHLSSoftmax,
     "softmax": MakeHLSSoftmax,
     "Swish": MakeHLSSwish,
     "swish": MakeHLSSwish,
     "Dense": MakeHLSGemm,
     "BatchNormalization": MakeHLSBatchNorm,
+    "batchnormalization": MakeHLSBatchNorm,
     "Conv2D": MakeHLSConv,
     "Conv1D": MakeHLSConv,
     "MaxPooling2D": MakeHLSPooling,
@@ -92,6 +88,7 @@ mapHLS4MLLayer = {
 
 
 def _move_op(op):
+    import ROOT
     ROOT.SetOwnership(op, False)
     return ROOT.std.unique_ptr[type(op)](op)
 
@@ -207,33 +204,36 @@ def add_layer_into_RModel(rmodel, layer_data):
             rmodel.AddOperator(_move_op(mapHLS4MLLayer[f_layer_type](layer_data)))
         return rmodel
 
-    if f_layer_type == "Conv2D":
+    if f_layer_type in ("Conv1D", "Conv2D"):
         from ROOT.TMVA.Experimental import SOFIE
         if channels_last:
-            perm = [0, 3, 1, 2]
+            # Rank 3 => [0, 2, 1], Rank 4 => [0, 3, 1, 2]
+            rank = 4
             if "_build_input_shape" in attrs:
                 rank = len(attrs["_build_input_shape"])
-                if rank == 3:
-                    perm = [0, 2, 1]
+            
+            if rank == 3:
+                perm = [0, 2, 1]
+            else:
+                perm = [0, 3, 1, 2]
+                
             op = SOFIE.ROperator_Transpose("float")(perm, inputs[0], layer_name + "PreTrans")
             rmodel.AddOperator(_move_op(op))
             inputs[0] = layer_name + "PreTrans"
             layer_data["layerInput"] = inputs
+        
         outputs[0] = layer_name + "PostTrans"
         layer_data["layerOutput"] = outputs
         rmodel.AddOperator(_move_op(mapHLS4MLLayer[f_layer_type](layer_data)))
+        
         if channels_last:
-            perm = [0, 2, 3, 1]
-            if "_build_input_shape" in attrs:
-                rank = len(attrs["_build_input_shape"])
-                if rank == 3:
-                    perm = [0, 2, 1]
+            # Inverse: Rank 3 => [0, 2, 1], Rank 4 => [0, 2, 3, 1]
+            if rank == 3:
+                perm = [0, 2, 1]
+            else:
+                perm = [0, 2, 3, 1]
             op = SOFIE.ROperator_Transpose("float")(perm, layer_name + "PostTrans", f_layer_output)
             rmodel.AddOperator(_move_op(op))
-        return rmodel
-
-    if f_layer_type == "Conv1D":
-        rmodel.AddOperator(_move_op(mapHLS4MLLayer[f_layer_type](layer_data)))
         return rmodel
 
     if f_layer_type == "Activation":

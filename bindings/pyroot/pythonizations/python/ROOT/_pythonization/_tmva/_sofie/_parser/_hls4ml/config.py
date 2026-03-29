@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import ast
 import re
-from typing import Any, Dict, List, Optional, Tuple
+import copy
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -52,8 +53,6 @@ def _activation_type_from_string(act: Any) -> Optional[str]:
         return "Swish"
     if a in ("leaky_relu", "leakyrelu"):
         return "LeakyReLU"
-    if a in ("thresholdedrelu", "thresholded_relu"):
-        return "ThresholdedReLU"
     if a in ("linear", "none"):
         return None
     return None
@@ -310,12 +309,13 @@ def _canonicalize_layer(
     attrs = dict(cfg_layer.get("attributes", {}))
     attrs["name"] = name
 
-    canonical: Dict[str, Any] = {
+    canonical = {
         "layerType": layer_type,
-        "layerInput": inputs,
-        "layerOutput": outputs,
-        "layerDType": "float32",
-        "layerAttributes": attrs,
+        "layerInput": inputs or [],
+        "layerOutput": outputs or [],
+        "layerDType": "float",
+        "layerAttributes": copy.deepcopy(attrs),
+        "layerWeight": [],
         "initialisers": {},
         "precision": _precision_from_layer(hls_layer, attrs),
         "name": name,
