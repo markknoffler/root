@@ -50,7 +50,6 @@ def generate_hls4ml_sequential(dst_dir):
 
     model = models.Sequential([layers.Input(shape=(10,)), layers.Dense(5, activation="sigmoid")])
     train_and_save(model, "Dense")
-
     model = models.Sequential([layers.Input(shape=(10,)), layers.ELU(alpha=0.5)])
     train_and_save(model, "ELU")
 
@@ -123,3 +122,4 @@ def generate_hls4ml_sequential(dst_dir):
         ]
     )
     train_and_save(model, "Layer_Combination_3")
+

@@ -21,28 +21,34 @@ from .layers.softmax import MakeHLSSoftmax
 from .layers.swish import MakeHLSSwish
 from .layers.leaky_relu import MakeHLSLeakyRelu
 from .layers.selu import MakeHLSSeLU
+from .layers.thresholdedrelu import MakeHLSThresholdedRelu
 
 
 def MakeHLSActivation(layer):
     attributes = layer["layerAttributes"]
-    act = str(attributes.get("Activation", attributes.get("activation", ""))).lower()
-    if act in ("relu",):
+    fLayerActivation = str(attributes.get("Activation", attributes.get("activation", "")))
+    if fLayerActivation == "ReLU":
         return MakeHLSReLU(layer)
-    if act in ("elu",):
+    if fLayerActivation == "ELU":
         return MakeHLSELU(layer)
-    if act in ("selu",):
+    if fLayerActivation == "SeLU":
         return MakeHLSSeLU(layer)
-    if act in ("sigmoid",):
+    if fLayerActivation == "Sigmoid":
         return MakeHLSSigmoid(layer)
-    if act in ("tanh",):
+    if fLayerActivation == "Tanh":
         return MakeHLSTanh(layer)
-    if act in ("softmax",):
+    if fLayerActivation == "Softmax":
         return MakeHLSSoftmax(layer)
-    if act in ("swish", "silu"):
+    if fLayerActivation in ("Swish", "SiLU"):
         return MakeHLSSwish(layer)
-    if act in ("leaky_relu", "leakyrelu"):
+    if fLayerActivation == "LeakyReLU":
         return MakeHLSLeakyRelu(layer)
-    raise Exception("TMVA.SOFIE - HLS4ML activation " + str(act) + " is not supported")
+    if fLayerActivation == "ThresholdedReLU":
+        return MakeHLSThresholdedRelu(layer)
+    else:
+        raise Exception(
+            "TMVA.SOFIE - HLS4ML activation " + fLayerActivation + " is not supported"
+        )
 
 
 mapHLS4MLLayer = {
@@ -56,12 +62,13 @@ mapHLS4MLLayer = {
     "sigmoid": MakeHLSSigmoid,
     "Tanh": MakeHLSTanh,
     "tanh": MakeHLSTanh,
+    "LeakyReLU": MakeHLSLeakyRelu,
+    "leaky_relu": MakeHLSLeakyRelu,
+    "ThresholdedReLU": MakeHLSThresholdedRelu,
     "Softmax": MakeHLSSoftmax,
     "softmax": MakeHLSSoftmax,
     "Swish": MakeHLSSwish,
     "swish": MakeHLSSwish,
-    "LeakyReLU": MakeHLSLeakyRelu,
-    "leaky_relu": MakeHLSLeakyRelu,
     "Dense": MakeHLSGemm,
     "BatchNormalization": MakeHLSBatchNorm,
     "Conv2D": MakeHLSConv,
@@ -129,7 +136,12 @@ def add_layer_into_RModel(rmodel, layer_data):
 
     if f_layer_type == "GlobalAveragePooling2D":
         if channels_last:
-            op = SOFIE.ROperator_Transpose("float")([0, 3, 1, 2], inputs[0], layer_name + "PreTrans")
+            perm = [0, 3, 1, 2]
+            if "_build_input_shape" in attrs:
+                rank = len(attrs["_build_input_shape"])
+                if rank == 3:
+                    perm = [0, 2, 1]
+            op = SOFIE.ROperator_Transpose("float")(perm, inputs[0], layer_name + "PreTrans")
             rmodel.AddOperator(_move_op(op))
             inputs[0] = layer_name + "PreTrans"
         outputs[0] = layer_name + "Squeeze"
@@ -144,16 +156,16 @@ def add_layer_into_RModel(rmodel, layer_data):
         build_shape = attrs.get("_build_input_shape")
         if not build_shape:
             raise RuntimeError("BatchNorm layer " + layer_name + " missing _build_input_shape in schema")
-        num_input_shapes = len(build_shape)
+        rank = len(build_shape)
         axis = attrs.get("axis", -1)
         if isinstance(axis, (list, tuple)):
             axis = axis[0]
         axis = int(axis)
         if axis < 0:
-            axis += num_input_shapes
-        f_attr_perm = list(range(0, num_input_shapes))
-        f_attr_perm[1] = axis
-        f_attr_perm[axis] = 1
+            axis += rank
+        f_attr_perm = list(range(0, rank))
+        if axis < rank:
+            f_attr_perm[1], f_attr_perm[axis] = f_attr_perm[axis], f_attr_perm[1]
         op = SOFIE.ROperator_Transpose("float")(f_attr_perm, inputs[0], layer_name + "PreTrans")
         rmodel.AddOperator(_move_op(op))
         inputs[0] = layer_name + "PreTrans"
@@ -167,21 +179,34 @@ def add_layer_into_RModel(rmodel, layer_data):
 
     if f_layer_type in ("MaxPooling2D", "AveragePooling2D"):
         if channels_last:
-            op = SOFIE.ROperator_Transpose("float")([0, 3, 1, 2], inputs[0], layer_name + "PreTrans")
+            rank = len(attrs["_build_input_shape"]) if "_build_input_shape" in attrs else 4
+            axis = attrs.get("axis", -1)
+            if axis < 0:
+                axis += rank
+            perm = list(range(rank))
+            if axis < rank:
+                perm[1], perm[axis] = perm[axis], perm[1]
+            op = SOFIE.ROperator_Transpose("float")(perm, inputs[0], layer_name + "PreTrans")
             rmodel.AddOperator(_move_op(op))
             inputs[0] = layer_name + "PreTrans"
             outputs[0] = layer_name + "PostTrans"
-        layer_data["layerInput"] = inputs
-        layer_data["layerOutput"] = outputs
-        rmodel.AddOperator(_move_op(mapHLS4MLLayer[f_layer_type](layer_data)))
-        if channels_last:
-            op = SOFIE.ROperator_Transpose("float")([0, 2, 3, 1], layer_name + "PostTrans", f_layer_output)
+            layer_data["layerInput"] = inputs
+            layer_data["layerOutput"] = outputs
+            rmodel.AddOperator(_move_op(mapHLS4MLLayer[f_layer_type](layer_data)))
+            op = SOFIE.ROperator_Transpose("float")(perm, layer_name + "PostTrans", f_layer_output)
             rmodel.AddOperator(_move_op(op))
+        else:
+            rmodel.AddOperator(_move_op(mapHLS4MLLayer[f_layer_type](layer_data)))
         return rmodel
 
     if f_layer_type == "Conv2D":
         if channels_last:
-            op = SOFIE.ROperator_Transpose("float")([0, 3, 1, 2], inputs[0], layer_name + "PreTrans")
+            perm = [0, 3, 1, 2]
+            if "_build_input_shape" in attrs:
+                rank = len(attrs["_build_input_shape"])
+                if rank == 3:
+                    perm = [0, 2, 1]
+            op = SOFIE.ROperator_Transpose("float")(perm, inputs[0], layer_name + "PreTrans")
             rmodel.AddOperator(_move_op(op))
             inputs[0] = layer_name + "PreTrans"
             layer_data["layerInput"] = inputs
@@ -189,7 +214,12 @@ def add_layer_into_RModel(rmodel, layer_data):
         layer_data["layerOutput"] = outputs
         rmodel.AddOperator(_move_op(mapHLS4MLLayer[f_layer_type](layer_data)))
         if channels_last:
-            op = SOFIE.ROperator_Transpose("float")([0, 2, 3, 1], layer_name + "PostTrans", f_layer_output)
+            perm = [0, 2, 3, 1]
+            if "_build_input_shape" in attrs:
+                rank = len(attrs["_build_input_shape"])
+                if rank == 3:
+                    perm = [0, 2, 1]
+            op = SOFIE.ROperator_Transpose("float")(perm, layer_name + "PostTrans", f_layer_output)
             rmodel.AddOperator(_move_op(op))
         return rmodel
 
@@ -244,6 +274,9 @@ def build_rmodel(cfg, name=None):
                 break
     if output_names:
         rmodel.AddOutputTensorNameList(output_names)
+
+    # Initialize model to register all intermediate tensors
+    rmodel.Initialize()
 
     return rmodel
 

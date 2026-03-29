@@ -57,7 +57,6 @@ def generate_hls4ml_functional(dst_dir):
 
     inp = layers.Input(shape=(10,))
     train_and_save(models.Model(inp, layers.Dense(5, activation="tanh")(inp)), "Dense")
-
     inp = layers.Input(shape=(10,))
     train_and_save(models.Model(inp, layers.ELU(alpha=0.5)(inp)), "ELU")
 
@@ -125,3 +124,4 @@ def generate_hls4ml_functional(dst_dir):
     merged = layers.LeakyReLU(alpha=0.1)(merged)
     out = layers.Dense(4, activation="softmax")(merged)
     train_and_save(models.Model([inp1, inp2], out), "Layer_Combination_3")
+
