@@ -83,7 +83,27 @@ if(tmva)
         ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/sigmoid.py
         ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/softmax.py
         ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/swish.py
-        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/tanh.py)
+        ROOT/_pythonization/_tmva/_sofie/_parser/_keras/layers/tanh.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/__init__.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/config.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/schema.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/parser.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/__init__.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/batchnorm.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/binary.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/concat.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/conv.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/elu.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/gemm.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/leaky_relu.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/pooling.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/relu.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/reshape.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/selu.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/sigmoid.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/softmax.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/swish.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/tanh.py)
 endif()
 
 set(py_sources

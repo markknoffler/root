@@ -146,6 +146,13 @@ if (tmva)
     endif()
 endif()
 
+# SOFIE hls4ml → RModel (optional python modules; test disabled if deps missing)
+if (tmva)
+    if(NOT MSVC OR CMAKE_SIZEOF_VOID_P EQUAL 4 OR win_broken_tests)
+        ROOT_ADD_PYUNITTEST(pyroot_pyz_sofie_hls4ml_parser sofie_hls4ml_parser.py PYTHON_DEPS hls4ml keras tensorflow)
+    endif()
+endif()
+
 # RTensor pythonizations
 if (tmva AND dataframe)
     ROOT_ADD_PYUNITTEST(pyroot_pyz_rtensor rtensor.py PYTHON_DEPS numpy)
