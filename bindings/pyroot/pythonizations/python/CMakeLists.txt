@@ -103,7 +103,9 @@ if(tmva)
         ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/sigmoid.py
         ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/softmax.py
         ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/swish.py
-        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/tanh.py)
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/tanh.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/permute.py
+        ROOT/_pythonization/_tmva/_sofie/_parser/_hls4ml/layers/thresholdedrelu.py)
 endif()
 
 set(py_sources
