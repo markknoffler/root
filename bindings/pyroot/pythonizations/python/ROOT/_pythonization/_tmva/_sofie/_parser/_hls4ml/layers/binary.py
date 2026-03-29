@@ -1,7 +1,5 @@
-from ROOT.TMVA.Experimental import SOFIE
-
-
 def MakeHLSBinary(layer):
+    from ROOT.TMVA.Experimental import SOFIE
     input_names = layer["layerInput"]
     output = layer["layerOutput"]
     fLayerType = layer["layerType"]

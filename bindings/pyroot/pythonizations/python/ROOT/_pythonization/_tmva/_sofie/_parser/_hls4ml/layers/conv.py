@@ -1,8 +1,6 @@
 import math
-from ROOT.TMVA.Experimental import SOFIE
-
-
 def MakeHLSConv(layer):
+    from ROOT.TMVA.Experimental import SOFIE
     # build Conv op
     finput = layer["layerInput"]
     foutput = layer["layerOutput"]

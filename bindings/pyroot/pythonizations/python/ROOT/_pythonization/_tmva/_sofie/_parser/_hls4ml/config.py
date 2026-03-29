@@ -52,7 +52,7 @@ def _activation_type_from_string(act: Any) -> Optional[str]:
         return "Swish"
     if a in ("leaky_relu", "leakyrelu"):
         return "LeakyReLU"
-    if a in ("thresholdedrelu",):
+    if a in ("thresholdedrelu", "thresholded_relu"):
         return "ThresholdedReLU"
     if a in ("linear", "none"):
         return None
@@ -85,6 +85,8 @@ def _layer_type_from_hls(hls_layer: Any, cfg_layer: Dict[str, Any]) -> Optional[
         return "Reshape"
     if "Flatten" in class_name:
         return "Flatten"
+    if "Permute" in class_name:
+        return "Permute"
     if class_name == "InputLayer":
         return "Input"
     if class_name == "ReLU":
@@ -393,6 +395,18 @@ def _canonicalize_layer(
                     var = hls_layer.get_output_variable()
                     if hasattr(var, "shape"):
                         canonical["layerAttributes"]["target_shape"] = list(var.shape)
+                except Exception:
+                    pass
+
+    elif layer_type == "Permute":
+        d = attrs.get("dims")
+        if d is not None:
+            canonical["layerAttributes"]["dims"] = list(_coerce_tuple(d, ()))
+        else:
+            # try to get from hls layer if missing in attrs
+            if hasattr(hls_layer, "get_attr"):
+                try:
+                    canonical["layerAttributes"]["dims"] = list(hls_layer.get_attr("dims"))
                 except Exception:
                     pass
 

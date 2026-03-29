@@ -455,16 +455,21 @@ class ROOTFacade(types.ModuleType):
             from ._pythonization import _tmva  # noqa: F401
             from ._pythonization._tmva._rtensor import _AsRTensor
             from ._pythonization._tmva._sofie._parser._keras.parser import PyKeras
-            from ._pythonization._tmva._sofie._parser._hls4ml.parser import PyHLS4ML
             from ._pythonization._tmva._tree_inference import SaveXGBoost
 
             setattr(ns.Experimental.SOFIE, "PyKeras", PyKeras)
-            setattr(ns.Experimental.SOFIE, "PyHLS4ML", PyHLS4ML)
 
             ns.Experimental.AsRTensor = _AsRTensor
             ns.Experimental.SaveXGBoost = SaveXGBoost
         except ImportError:
             # _tmva submodule not available (expected for tmva=OFF)
+            pass
+        try:
+            from ._pythonization._tmva._sofie._parser._hls4ml.parser import PyHLS4ML
+
+            setattr(ns.Experimental.SOFIE, "PyHLS4ML", PyHLS4ML)
+        except ImportError:
+            # hls4ml parser optional (heavy deps or incomplete install)
             pass
         del type(self).TMVA
         return ns

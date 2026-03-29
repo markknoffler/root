@@ -1,7 +1,5 @@
-from ROOT.TMVA.Experimental import SOFIE
-
-
 def MakeHLSBatchNorm(layer):
+    from ROOT.TMVA.Experimental import SOFIE
     # build BatchNorm op
     finput = layer["layerInput"]
     foutput = layer["layerOutput"]

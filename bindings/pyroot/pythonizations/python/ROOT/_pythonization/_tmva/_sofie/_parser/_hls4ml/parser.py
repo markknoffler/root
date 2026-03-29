@@ -1,14 +1,14 @@
 import copy
 import time
 import numpy as np
-import ROOT
-from ROOT.TMVA.Experimental import SOFIE
 
-from .config import extract_hls_config
+
+from .config import extract_hls_config, _activation_type_from_string
 from .schema import sofie_layer_dict
 from .layers.relu import MakeHLSReLU
 from .layers.elu import MakeHLSELU
 from .layers.gemm import MakeHLSGemm
+from .layers.permute import MakeHLSPermute
 from .layers.reshape import MakeHLSReshape
 from .layers.concat import MakeHLSConcat
 from .layers.batchnorm import MakeHLSBatchNorm
@@ -25,8 +25,12 @@ from .layers.thresholdedrelu import MakeHLSThresholdedRelu
 
 
 def MakeHLSActivation(layer):
+    from ROOT.TMVA.Experimental import SOFIE
     attributes = layer["layerAttributes"]
-    fLayerActivation = str(attributes.get("Activation", attributes.get("activation", "")))
+    raw = attributes.get("Activation", attributes.get("activation", ""))
+    fLayerActivation = _activation_type_from_string(raw)
+    if fLayerActivation is None:
+        fLayerActivation = str(raw).strip()
     if fLayerActivation == "ReLU":
         return MakeHLSReLU(layer)
     if fLayerActivation == "ELU":
@@ -76,6 +80,7 @@ mapHLS4MLLayer = {
     "MaxPooling2D": MakeHLSPooling,
     "AveragePooling2D": MakeHLSPooling,
     "GlobalAveragePooling2D": MakeHLSPooling,
+    "Permute": MakeHLSPermute,
     "Reshape": MakeHLSReshape,
     "Flatten": MakeHLSReshape,
     "Concatenate": MakeHLSConcat,
@@ -135,6 +140,7 @@ def add_layer_into_RModel(rmodel, layer_data):
     channels_last = layer_data.get("channels_last", True)
 
     if f_layer_type == "GlobalAveragePooling2D":
+        from ROOT.TMVA.Experimental import SOFIE
         if channels_last:
             perm = [0, 3, 1, 2]
             if "_build_input_shape" in attrs:
@@ -153,6 +159,7 @@ def add_layer_into_RModel(rmodel, layer_data):
         return rmodel
 
     if f_layer_type == "BatchNormalization":
+        from ROOT.TMVA.Experimental import SOFIE
         build_shape = attrs.get("_build_input_shape")
         if not build_shape:
             raise RuntimeError("BatchNorm layer " + layer_name + " missing _build_input_shape in schema")
@@ -178,6 +185,7 @@ def add_layer_into_RModel(rmodel, layer_data):
         return rmodel
 
     if f_layer_type in ("MaxPooling2D", "AveragePooling2D"):
+        from ROOT.TMVA.Experimental import SOFIE
         if channels_last:
             rank = len(attrs["_build_input_shape"]) if "_build_input_shape" in attrs else 4
             axis = attrs.get("axis", -1)
@@ -200,6 +208,7 @@ def add_layer_into_RModel(rmodel, layer_data):
         return rmodel
 
     if f_layer_type == "Conv2D":
+        from ROOT.TMVA.Experimental import SOFIE
         if channels_last:
             perm = [0, 3, 1, 2]
             if "_build_input_shape" in attrs:
@@ -238,6 +247,8 @@ def add_layer_into_RModel(rmodel, layer_data):
 
 
 def build_rmodel(cfg, name=None):
+    import ROOT
+    from ROOT.TMVA.Experimental import SOFIE
     # build RModel using cfg only
     model_name = name or cfg.get("name", "HLS4MLModel")
     parsetime = time.asctime(time.gmtime(time.time()))

@@ -1,7 +1,5 @@
-from ROOT.TMVA.Experimental import SOFIE
-
-
 def MakeHLSReshape(layer):
+    from ROOT.TMVA.Experimental import SOFIE
     finput = layer["layerInput"]
     foutput = layer["layerOutput"]
     attributes = layer["layerAttributes"]

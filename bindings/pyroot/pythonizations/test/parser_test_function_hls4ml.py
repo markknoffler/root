@@ -11,6 +11,17 @@ def is_accurate(tensor_a, tensor_b, tolerance=1e-2):
     return True
 
 
+def _get_pyhls4ml():
+    # Touch TMVA once so the facade attaches PyKeras / PyHLS4ML when available.
+    _ = ROOT.TMVA
+    sofie = ROOT.TMVA.Experimental.SOFIE
+    if hasattr(sofie, "PyHLS4ML"):
+        return sofie.PyHLS4ML
+    from ROOT._pythonization._tmva._sofie._parser._hls4ml.parser import PyHLS4ML
+
+    return PyHLS4ML
+
+
 def generate_and_test_inference_hls4ml(model_file_path: str, generated_header_file_dir: str = None, batch_size=1):
     import keras
     import numpy as np
@@ -28,9 +39,14 @@ def generate_and_test_inference_hls4ml(model_file_path: str, generated_header_fi
     generated_header_file_path = generated_header_file_dir + "/" + model_name + ".hxx"
 
     keras_model = keras.models.load_model(model_file_path)
-    keras_model.load_weights(model_file_path)
 
     hls_cfg = hls4ml.utils.config_from_keras_model(keras_model, granularity="name")
+    if isinstance(hls_cfg, dict):
+        hls_cfg.setdefault("Model", {})["Precision"] = "float"
+        for _layer_name, layer_cfg in hls_cfg.get("LayerName", {}).items():
+            if isinstance(layer_cfg, dict):
+                layer_cfg["Precision"] = "float"
+
     hls_model = hls4ml.converters.convert_from_keras_model(keras_model, hls_config=hls_cfg)
 
     print(
@@ -39,12 +55,14 @@ def generate_and_test_inference_hls4ml(model_file_path: str, generated_header_fi
         "in the header",
         generated_header_file_path,
     )
-    rmodel = ROOT.TMVA.Experimental.SOFIE.PyHLS4ML.ParseFromModelGraph(
+    PyHLS4ML = _get_pyhls4ml()
+    rmodel = PyHLS4ML.ParseFromModelGraph(
         hls_model,
         name=model_name,
         keras_model=keras_model,
     )
-    rmodel.Generate()
+    SOFIE = ROOT.TMVA.Experimental.SOFIE
+    rmodel.Generate(SOFIE.Options.kDefault)
     rmodel.OutputGenerated(generated_header_file_path)
 
     print(f"Compiling SOFIE model {model_name}")
@@ -62,7 +80,8 @@ def generate_and_test_inference_hls4ml(model_file_path: str, generated_header_fi
 
     sofie_inference_result = inference_session.infer(*input_tensors)
     sofie_output_tensor_shape = list(rmodel.GetTensorShape(rmodel.GetOutputTensorNames()[0]))
-    keras_inference_result = keras_model(input_tensors)
+    keras_inputs = input_tensors[0] if len(input_tensors) == 1 else input_tensors
+    keras_inference_result = keras_model(keras_inputs)
     if sofie_output_tensor_shape != list(keras_inference_result.shape):
         raise AssertionError("Output tensor dimensions from SOFIE and Keras do not match")
 

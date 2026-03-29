@@ -1,7 +1,5 @@
-from ROOT.TMVA.Experimental import SOFIE
-
-
 def MakeHLSPooling(layer):
+    from ROOT.TMVA.Experimental import SOFIE
     # build pooling op
     fLayerDType = layer["layerDType"]
     finput = layer["layerInput"]
