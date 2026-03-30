@@ -84,7 +84,8 @@ def generate_and_test_inference_hls4ml(model_file_path: str, generated_header_fi
     sofie_inference_result = inference_session.infer(*input_tensors)
     sofie_output_tensor_shape = list(rmodel.GetTensorShape(rmodel.GetOutputTensorNames()[0]))
     keras_inputs = input_tensors[0] if len(input_tensors) == 1 else input_tensors
-    keras_inference_result = keras_model(keras_inputs)
+    # Use predict() to avoid Keras input-structure warnings affecting comparisons.
+    keras_inference_result = keras_model.predict(keras_inputs, verbose=0)
     if sofie_output_tensor_shape != list(keras_inference_result.shape):
         raise AssertionError("Output tensor dimensions from SOFIE and Keras do not match")
 

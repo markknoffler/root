@@ -143,14 +143,32 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
     layer_name = attrs.get("name", "layer")
 
     if f_layer_type in ("Reshape", "Flatten"):
-        target = attrs.get("target_shape")
-        if target is None:
-            target = [-1]
-        target = np.ascontiguousarray(np.asarray(target, dtype="int64"))
-        if f_layer_type == "Flatten":
-            target = np.ascontiguousarray(np.asarray([-1], dtype="int64"))
+        # SOFIE expects the reshape "shape vector" to include the batch dim for Reshape,
+        # while Flatten expects the flattened length as a single value.
         shape_name = layer_name + "_shape"
-        rmodel.AddInitializedTensor["int64_t"](shape_name, [len(target)], target)
+        if f_layer_type == "Reshape":
+            target = attrs.get("target_shape")
+            if target is None:
+                target = [-1]
+            target_arr = np.ascontiguousarray(np.asarray(target, dtype="int64"))
+            # Insert batch dimension (SOFIE uses 1 here; runtime batch is handled separately).
+            target_arr = np.insert(target_arr, 0, 1)
+        else:  # Flatten
+            # Compute product of dims excluding batch.
+            inp_names = list(layer_data.get("layerInput") or [])
+            inp_name = inp_names[0] if inp_names else None
+            input_shape = node_shapes.get(inp_name) if inp_name is not None else None
+            if input_shape is None:
+                try:
+                    input_shape = list(rmodel.GetTensorShape(inp_name))
+                except Exception:
+                    input_shape = [1, 1]
+            prod = 1
+            for x in input_shape[1:]:
+                prod *= int(x)
+            target_arr = np.ascontiguousarray(np.asarray([prod], dtype="int64"))
+
+        rmodel.AddInitializedTensor["int64_t"](shape_name, [len(target_arr)], target_arr)
 
     if f_layer_type not in mapHLS4MLLayer and f_layer_type != "Activation":
         return rmodel
@@ -417,10 +435,9 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
     from ROOT.TMVA.Experimental import SOFIE
     op = mapHLS4MLLayer[f_layer_type](layer_data)
     
+    output_shape = None
     try:
         if f_layer_type == "Dense":
-            # For Dense, it's [N, out_dim]
-            # Use hls4ml metadata directly for more accuracy
             out_dim = attrs.get("n_out", 1)
             output_shape = [input_shape[0], out_dim]
         elif f_layer_type == "Reshape":
@@ -428,23 +445,26 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
             output_shape = [input_shape[0]] + list(target)
         elif f_layer_type == "Flatten":
             prod = 1
-            for x in input_shape[1:]: prod *= x
+            for x in input_shape[1:]:
+                prod *= x
             output_shape = [input_shape[0], prod]
         elif f_layer_type == "Concatenate":
             output_shape = list(input_shape)
             axis = attrs.get("axis", -1)
-            if axis < 0: axis += len(input_shape)
+            if axis < 0:
+                axis += len(input_shape)
             concat_dim = 0
             for inp_name in inputs:
-                concat_dim += node_shapes.get(inp_name, [0,0,0,0])[axis]
+                concat_dim += node_shapes.get(inp_name, [0, 0, 0, 0])[axis]
             output_shape[axis] = concat_dim
         else:
             output_shape = input_shape
-            
-        rmodel.AddIntermediateTensor(f_layer_output, SOFIE.ETensorType.FLOAT, output_shape)
-        node_shapes[f_layer_output] = output_shape
     except Exception:
-        pass
+        # If shape inference fails, still register something so SOFIE can type tensors.
+        output_shape = input_shape
+
+    rmodel.AddIntermediateTensor(f_layer_output, SOFIE.ETensorType.FLOAT, output_shape)
+    node_shapes[f_layer_output] = output_shape
 
     rmodel.AddOperator(_move_op(op))
     return rmodel

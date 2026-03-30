@@ -53,8 +53,6 @@ def _activation_type_from_string(act: Any) -> Optional[str]:
         return "Swish"
     if a in ("leaky_relu", "leakyrelu"):
         return "LeakyReLU"
-    if a in ("thresholdedrelu",):
-        return "ThresholdedReLU"
     if a in ("linear", "none"):
         return None
     return None
@@ -72,14 +70,21 @@ def _layer_type_from_hls(hls_layer: Any, cfg_layer: Dict[str, Any]) -> Optional[
         return "Conv2D"
     if "Conv1D" in class_name:
         return "Conv1D"
-    if "MaxPooling2D" in class_name:
+    lc = str(class_name).lower()
+    if "maxpool" in lc:
         return "MaxPooling2D"
-    if "AveragePooling2D" in class_name:
+    if "averagepool" in lc:
         return "AveragePooling2D"
-    if "GlobalAveragePooling2D" in class_name:
+    if "globalaveragepool" in lc:
         return "GlobalAveragePooling2D"
-    if class_name in ("Add", "Subtract", "Multiply"):
-        return class_name
+    if lc in ("add", "subtract", "multiply"):
+        return class_name.capitalize()
+    if lc.startswith("add"):
+        return "Add"
+    if lc.startswith("subtract"):
+        return "Subtract"
+    if lc.startswith("multiply"):
+        return "Multiply"
     if "Concat" in class_name:
         return "Concatenate"
     if "Reshape" in class_name:
@@ -331,9 +336,13 @@ def _canonicalize_layer(
 
     if layer_type == "Dense":
         canonical["layerWeight"] = [name + "_W", name + "_B"]
-        _, w_arr, b_arr = _dense_weights_from_hls(hls_layer)
-        if w_arr is None and keras_model is not None:
+        # Prefer Keras weights when available (tests pass keras_model= into ParseFromModelGraph).
+        # This avoids any potential orientation/format differences in hls_layer weight extraction.
+        w_arr, b_arr = (None, None)
+        if keras_model is not None:
             w_arr, b_arr = _get_dense_weights_from_keras(keras_model, name)
+        if w_arr is None:
+            _, w_arr, b_arr = _dense_weights_from_hls(hls_layer)
         if w_arr is None:
             raise RuntimeError(
                 "Dense layer " + name + " has no weights (pass keras_model= for Keras-sourced HLS4ML)"
@@ -342,6 +351,11 @@ def _canonicalize_layer(
             b_arr = np.zeros(w_arr.shape[0], dtype=np.float32)
         canonical["initialisers"][name + "_W"] = np.ascontiguousarray(w_arr, dtype=np.float32)
         canonical["initialisers"][name + "_B"] = np.ascontiguousarray(b_arr.flatten(), dtype=np.float32)
+        # SOFIE Dense output shape needs an explicit output dimension.
+        # hls4ml extraction doesn't always provide this in layerAttributes.
+        if w_arr is not None and hasattr(w_arr, "shape") and len(w_arr.shape) >= 2:
+            canonical["layerAttributes"]["n_in"] = int(w_arr.shape[0])
+            canonical["layerAttributes"]["n_out"] = int(w_arr.shape[1])
 
     elif layer_type == "BatchNormalization":
         canonical["layerWeight"] = [name + "_scale", name + "_bias", name + "_mean", name + "_var"]
@@ -388,7 +402,11 @@ def _canonicalize_layer(
         shape = cfg_layer.get("output_shape")
         if shape is not None:
             try:
-                canonical["layerAttributes"]["target_shape"] = list(shape)
+                # SOFIE reshape mode expects shape excluding batch dim.
+                shp_list = list(shape)
+                if len(shp_list) >= 2:
+                    shp_list = shp_list[1:]
+                canonical["layerAttributes"]["target_shape"] = shp_list
             except Exception:
                 pass
         if not canonical["layerAttributes"].get("target_shape"):
@@ -396,7 +414,10 @@ def _canonicalize_layer(
                 try:
                     var = hls_layer.get_output_variable()
                     if hasattr(var, "shape"):
-                        canonical["layerAttributes"]["target_shape"] = list(var.shape)
+                        shp_list = list(var.shape)
+                        if len(shp_list) >= 2:
+                            shp_list = shp_list[1:]
+                        canonical["layerAttributes"]["target_shape"] = shp_list
                 except Exception:
                     pass
 
@@ -415,10 +436,20 @@ def _canonicalize_layer(
     elif layer_type == "Activation":
         attrs["activation"] = attrs.get("Activation", attrs.get("activation", ""))
 
-    elif layer_type == "LeakyReLU":
+    elif layer_type == "ELU":
         kl = _get_keras_layer(keras_model, name)
         if kl is not None and hasattr(kl, "alpha"):
             canonical["layerAttributes"]["alpha"] = float(kl.alpha)
+
+    elif layer_type == "LeakyReLU":
+        kl = _get_keras_layer(keras_model, name)
+        if kl is not None:
+            if hasattr(kl, "alpha"):
+                canonical["layerAttributes"]["alpha"] = float(kl.alpha)
+            if hasattr(kl, "negative_slope"):
+                canonical["layerAttributes"]["negative_slope"] = float(kl.negative_slope)
+                # Keep compatibility with operators that only look at `alpha`.
+                canonical["layerAttributes"]["alpha"] = float(kl.negative_slope)
 
     if layer_type == "Input":
         pass
@@ -534,12 +565,43 @@ def extract_hls_config(hls_model: Any, keras_model: Any = None) -> Dict[str, Any
             n = getattr(x, "name", None)
             outputs.append(str(x) if n is None else n)
 
+    # Provide explicit per-input shapes when we have a Keras model.
+    # The build stage in SOFIE needs these exact ranks/dims; guessing from hls4ml inputs
+    # can easily collapse to rank-1 shapes like [1] -> [1,1] and break conv/pool handlers.
+    input_node_shapes: Dict[str, List[int]] = {}
+    if keras_model is not None and hasattr(keras_model, "inputs") and hasattr(hls_model, "inputs"):
+        for idx, x in enumerate(hls_model.inputs):
+            if idx >= len(getattr(keras_model, "inputs", [])):
+                break
+            keras_in = keras_model.inputs[idx]
+            shp = getattr(keras_in, "shape", None)
+            if shp is None:
+                continue
+            shp_list = list(shp)
+            # Drop batch dim (usually None) and replace with Keras feature shape.
+            if len(shp_list) >= 1:
+                shp_no_batch = shp_list[1:]
+            else:
+                shp_no_batch = shp_list
+            if not shp_no_batch:
+                shp_no_batch = [1]
+            # Convert None/unknown dims to 1 for safe integer shapes.
+            cleaned = []
+            for d in shp_no_batch:
+                try:
+                    val = int(d)
+                    cleaned.append(val if val > 0 else 1)
+                except Exception:
+                    cleaned.append(1)
+            input_node_shapes[str(getattr(x, "name", None) or str(x))] = cleaned
+
     return {
         "name": name,
         "layers": canonical_layers,
         "weights": weights_meta,
         "inputs": inputs or ["input_0"],
         "outputs": outputs,
+        "input_node_shapes": input_node_shapes,
         "input_shape": _infer_input_shape(hls_model),
     }
 
