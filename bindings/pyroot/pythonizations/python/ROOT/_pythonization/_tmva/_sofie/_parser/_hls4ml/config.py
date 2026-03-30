@@ -571,6 +571,28 @@ def _canonicalize_layer(
 
     elif layer_type in ("Conv2D", "Conv1D"):
         canonical["layerWeight"] = [name + "_kernel", name + "_bias"]
+        in_name_for_conv = inputs[0] if inputs else None
+        out_name_for_conv = outputs[0] if outputs else None
+
+        expected_in_c = None
+        if in_name_for_conv and in_name_for_conv in tensor_shapes:
+            try:
+                expected_in_c = int(tensor_shapes[in_name_for_conv][-1])
+            except Exception:
+                expected_in_c = None
+
+        expected_out_c = None
+        if "n_filt" in attrs:
+            try:
+                expected_out_c = int(attrs["n_filt"])
+            except Exception:
+                expected_out_c = None
+        if expected_out_c is None and out_name_for_conv and out_name_for_conv in tensor_shapes:
+            try:
+                expected_out_c = int(tensor_shapes[out_name_for_conv][-1])
+            except Exception:
+                expected_out_c = None
+
         # Prefer deterministic extraction from raw hls weights by shape first,
         # then use key-based matching as fallback.
         k_w = None
@@ -596,13 +618,33 @@ def _canonicalize_layer(
 
         # Conv2D kernel is expected to be 4D, bias is usually 1D.
         if layer_type == "Conv2D":
+            kernel_candidates: List[np.ndarray] = []
+            bias_candidates: List[np.ndarray] = []
             for arr in raw_arrays:
                 if getattr(arr, "ndim", 0) == 4:
-                    k_w = arr
-                    break
-            for arr in raw_arrays:
+                    kernel_candidates.append(arr)
                 if getattr(arr, "ndim", 0) == 1:
-                    b_w = arr.flatten()
+                    bias_candidates.append(arr.flatten())
+
+            # Choose bias candidate that matches expected output channels.
+            if expected_out_c is not None:
+                for arr in bias_candidates:
+                    if int(arr.shape[0]) == int(expected_out_c):
+                        b_w = arr
+                        break
+            if b_w is None and bias_candidates:
+                b_w = bias_candidates[0]
+
+            # Choose kernel candidate consistent with expected channel counts.
+            if kernel_candidates:
+                if expected_in_c is not None and expected_out_c is not None:
+                    for arr in kernel_candidates:
+                        shp = list(arr.shape)
+                        if int(expected_out_c) in shp and int(expected_in_c) in shp:
+                            k_w = arr
+                            break
+                if k_w is None:
+                    k_w = kernel_candidates[0]
                     break
 
         if k_w is None or b_w is None:
@@ -618,30 +660,15 @@ def _canonicalize_layer(
         if k_w is None:
             raise RuntimeError("Conv layer " + name + " has no kernel weights in hls4ml layer")
 
-        in_name_for_conv = inputs[0] if inputs else None
-        out_name_for_conv = outputs[0] if outputs else None
-        in_c = None
-        if in_name_for_conv and in_name_for_conv in tensor_shapes:
-            try:
-                in_c = int(tensor_shapes[in_name_for_conv][-1])
-            except Exception:
-                in_c = None
+        in_c = expected_in_c
         out_c = None
         if b_w is not None:
             try:
                 out_c = int(np.asarray(b_w, dtype=np.float32).flatten().shape[0])
             except Exception:
                 out_c = None
-        if out_c is None and out_name_for_conv and out_name_for_conv in tensor_shapes:
-            try:
-                out_c = int(tensor_shapes[out_name_for_conv][-1])
-            except Exception:
-                out_c = None
-        if out_c is None and "n_filt" in attrs:
-            try:
-                out_c = int(attrs["n_filt"])
-            except Exception:
-                out_c = None
+        if out_c is None:
+            out_c = expected_out_c
 
         if b_w is None:
             b_w = np.zeros(int(out_c if out_c is not None else attrs.get("n_filt", 1)), dtype=np.float32)
@@ -650,7 +677,7 @@ def _canonicalize_layer(
         if layer_type == "Conv2D" and getattr(k_w, "ndim", 0) == 4:
             kernel = np.asarray(k_w, dtype=np.float32)
             if in_c is not None and out_c is not None:
-                # Prefer the common Keras/hls4ml format HWIO first.
+                # Prefer HWIO first; fall back to other common layouts.
                 if int(kernel.shape[-2]) == in_c and int(kernel.shape[-1]) == out_c:
                     k_w = np.transpose(kernel, (3, 2, 0, 1)).copy()  # HWIO -> OIHW
                 elif int(kernel.shape[0]) == out_c and int(kernel.shape[1]) == in_c:
