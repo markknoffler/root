@@ -162,7 +162,7 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
 
     # Normalize layer type strings so we don't silently skip operators.
     if isinstance(f_layer_type, str):
-        lc = f_layer_type.lower()
+        lc = f_layer_type.strip().lower()
         if lc in ("add", "subtract", "multiply"):
             f_layer_type = lc.capitalize()
         elif "maxpool" in lc:
@@ -188,6 +188,42 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
 
     attrs = layer_data["layerAttributes"]
     layer_name = attrs.get("name", "layer")
+
+    # Pre-register (alias) all layer input tensor names so SOFIE ops can find them
+    # even when extraction uses slightly different tensor-name suffixing.
+    def _resolve_shape_for_name(tname: str):
+        t = _normalize_tensor_name(tname)
+        if t in node_shapes:
+            return node_shapes[t]
+
+        # foo_1 -> foo
+        base = t
+        if "_" in t:
+            prefix, suffix = t.rsplit("_", 1)
+            if suffix.isdigit() and prefix in node_shapes:
+                return node_shapes[prefix]
+
+        # Prefix match fallback
+        for k, v in node_shapes.items():
+            ks = _normalize_tensor_name(k)
+            if ks == t:
+                return v
+            if ks.startswith(t):
+                return v
+        return None
+
+    for in_name in list(layer_data.get("layerInput", []) or []):
+        shape = _resolve_shape_for_name(in_name)
+        if shape is not None:
+            _add_intermediate_tensor_safe(in_name, shape)
+
+    # For binary ops, also ensure the output tensor exists.
+    if f_layer_type in ("Add", "Subtract", "Multiply"):
+        bin_in = list(layer_data.get("layerInput", []) or [])
+        bin_shape = _resolve_shape_for_name(bin_in[0]) if bin_in else None
+        for out_name in list(layer_data.get("layerOutput", []) or []):
+            if bin_shape is not None:
+                _add_intermediate_tensor_safe(out_name, bin_shape)
 
     # Pre-register declared output tensors when we already know their shapes.
     # This avoids hard Generate-time failures if a tensor type was not registered
