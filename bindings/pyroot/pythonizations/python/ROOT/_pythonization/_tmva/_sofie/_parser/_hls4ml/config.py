@@ -571,74 +571,107 @@ def _canonicalize_layer(
 
     elif layer_type in ("Conv2D", "Conv1D"):
         canonical["layerWeight"] = [name + "_kernel", name + "_bias"]
-        w = _weights_from_hls_by_key(
-            hls_layer,
-            {"kernel": ["kernel", "weight", "weights", "w"], "bias": ["bias", "b"]},
-        )
-        k_w, b_w = w["kernel"], w["bias"]
+        # Prefer deterministic extraction from raw hls weights by shape first,
+        # then use key-based matching as fallback.
+        k_w = None
+        b_w = None
+        raw_w = None
+        if hasattr(hls_layer, "get_weights"):
+            try:
+                raw_w = hls_layer.get_weights()
+            except Exception:
+                raw_w = None
+
+        raw_arrays: List[np.ndarray] = []
+        if isinstance(raw_w, dict):
+            for _k, _v in raw_w.items():
+                arr = _to_numpy(_v)
+                if arr is not None:
+                    raw_arrays.append(np.asarray(arr, dtype=np.float32))
+        elif isinstance(raw_w, (list, tuple)):
+            for _v in raw_w:
+                arr = _to_numpy(_v)
+                if arr is not None:
+                    raw_arrays.append(np.asarray(arr, dtype=np.float32))
+
+        # Conv2D kernel is expected to be 4D, bias is usually 1D.
+        if layer_type == "Conv2D":
+            for arr in raw_arrays:
+                if getattr(arr, "ndim", 0) == 4:
+                    k_w = arr
+                    break
+            for arr in raw_arrays:
+                if getattr(arr, "ndim", 0) == 1:
+                    b_w = arr.flatten()
+                    break
+
+        if k_w is None or b_w is None:
+            w = _weights_from_hls_by_key(
+                hls_layer,
+                {"kernel": ["kernel", "weight", "weights", "w"], "bias": ["bias", "b"]},
+            )
+            if k_w is None:
+                k_w = w["kernel"]
+            if b_w is None:
+                b_w = w["bias"]
+
         if k_w is None:
             raise RuntimeError("Conv layer " + name + " has no kernel weights in hls4ml layer")
-        if b_w is None:
-            b_w = np.zeros(int(attrs.get("n_filt", k_w.shape[0])), dtype=np.float32)
-        # Kernel layout handling:
-        # SOFIE expects Conv weights as [out_channels, in_channels, kh, kw].
-        # hls4ml may provide different layouts depending on backend/version.
-        if getattr(k_w, "ndim", 0) == 4:
-            in_name_for_conv = inputs[0] if inputs else None
-            out_name_for_conv = outputs[0] if outputs else None
 
-            in_c = None
-            if in_name_for_conv and in_name_for_conv in tensor_shapes:
-                try:
-                    in_c = int(tensor_shapes[in_name_for_conv][-1])
-                except Exception:
-                    in_c = None
-
-            # Prefer bias length for out_c (most reliable).
-            out_c = None
+        in_name_for_conv = inputs[0] if inputs else None
+        out_name_for_conv = outputs[0] if outputs else None
+        in_c = None
+        if in_name_for_conv and in_name_for_conv in tensor_shapes:
+            try:
+                in_c = int(tensor_shapes[in_name_for_conv][-1])
+            except Exception:
+                in_c = None
+        out_c = None
+        if b_w is not None:
             try:
                 out_c = int(np.asarray(b_w, dtype=np.float32).flatten().shape[0])
             except Exception:
                 out_c = None
-            if out_c is None and out_name_for_conv and out_name_for_conv in tensor_shapes:
-                try:
-                    out_c = int(tensor_shapes[out_name_for_conv][-1])
-                except Exception:
-                    out_c = None
-            if out_c is None and "n_filt" in attrs:
-                try:
-                    out_c = int(attrs["n_filt"])
-                except Exception:
-                    out_c = None
-
-            if in_c is not None and out_c is not None:
-                kernel = np.asarray(k_w, dtype=np.float32)
-                # Candidate layouts -> transpose to OIHW
-                candidates = [
-                    (0, 1, 2, 3),  # OIHW
-                    (3, 2, 0, 1),  # HWIO -> OIHW (Keras)
-                    (0, 3, 1, 2),  # OHWI -> OIHW
-                    (1, 0, 2, 3),  # IOHW -> OIHW
-                    (3, 0, 1, 2),  # IHWO -> OIHW (rare)
-                    (2, 3, 0, 1),  # HWOI -> OIHW (rare)
-                ]
-                for perm in candidates:
-                    try:
-                        t = np.transpose(kernel, perm)
-                        if int(t.shape[0]) == out_c and int(t.shape[1]) == in_c:
-                            k_w = t.copy()
-                            break
-                    except Exception:
-                        continue
-
-            # Some backends/operators interpret Conv as true convolution (kernel flipped),
-            # while Keras defines Conv2D as cross-correlation. If the kernel is now OIHW,
-            # flipping the spatial dims aligns conventions.
+        if out_c is None and out_name_for_conv and out_name_for_conv in tensor_shapes:
             try:
-                if layer_type == "Conv2D" and getattr(k_w, "ndim", 0) == 4:
-                    k_w = np.asarray(k_w, dtype=np.float32)[:, :, ::-1, ::-1].copy()
+                out_c = int(tensor_shapes[out_name_for_conv][-1])
             except Exception:
-                pass
+                out_c = None
+        if out_c is None and "n_filt" in attrs:
+            try:
+                out_c = int(attrs["n_filt"])
+            except Exception:
+                out_c = None
+
+        if b_w is None:
+            b_w = np.zeros(int(out_c if out_c is not None else attrs.get("n_filt", 1)), dtype=np.float32)
+
+        # Normalize kernel layout to OIHW for SOFIE.
+        if layer_type == "Conv2D" and getattr(k_w, "ndim", 0) == 4:
+            kernel = np.asarray(k_w, dtype=np.float32)
+            if in_c is not None and out_c is not None:
+                # Prefer the common Keras/hls4ml format HWIO first.
+                if int(kernel.shape[-2]) == in_c and int(kernel.shape[-1]) == out_c:
+                    k_w = np.transpose(kernel, (3, 2, 0, 1)).copy()  # HWIO -> OIHW
+                elif int(kernel.shape[0]) == out_c and int(kernel.shape[1]) == in_c:
+                    k_w = kernel.copy()  # already OIHW
+                elif int(kernel.shape[0]) == out_c and int(kernel.shape[-1]) == in_c:
+                    k_w = np.transpose(kernel, (0, 3, 1, 2)).copy()  # OHWI -> OIHW
+                elif int(kernel.shape[0]) == in_c and int(kernel.shape[1]) == out_c:
+                    k_w = np.transpose(kernel, (1, 0, 2, 3)).copy()  # IOHW -> OIHW
+                else:
+                    # Last-resort exhaustive attempt.
+                    for perm in ((0, 1, 2, 3), (3, 2, 0, 1), (0, 3, 1, 2), (1, 0, 2, 3), (3, 0, 1, 2), (2, 3, 0, 1)):
+                        try:
+                            t = np.transpose(kernel, perm)
+                            if int(t.shape[0]) == out_c and int(t.shape[1]) == in_c:
+                                k_w = t.copy()
+                                break
+                        except Exception:
+                            continue
+            else:
+                # If channel counts are unknown, assume HWIO (most common source layout).
+                k_w = np.transpose(kernel, (3, 2, 0, 1)).copy()
         canonical["initialisers"][name + "_kernel"] = np.ascontiguousarray(k_w, dtype=np.float32)
         canonical["initialisers"][name + "_bias"] = np.ascontiguousarray(b_w.flatten(), dtype=np.float32)
 
