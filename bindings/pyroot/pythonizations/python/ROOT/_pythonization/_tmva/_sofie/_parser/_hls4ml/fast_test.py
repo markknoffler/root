@@ -86,6 +86,9 @@ def generate_and_test(keras_model, model_name, batch_size=1):
     sofie_res_np = np.asarray(sofie_result)
     keras_res_np = np.asarray(keras_result)
     
+    print(f"  SOFIE output (first 5): {sofie_res_np.flatten()[:5]}")
+    print(f"  Keras output (first 5): {keras_res_np.flatten()[:5]}")
+    
     if not is_accurate(sofie_res_np, keras_res_np):
         print(f"FAILED accuracy for {model_name}")
         return False
@@ -143,7 +146,10 @@ if __name__ == "__main__":
         print(f"{name:25} : {status}")
     
     # Cleanup generated files
-    for name, _ in test_models:
+    for _, name in test_models:
         for ext in [".hxx", ".dat"]:
             if os.path.exists(name + ext):
-                os.remove(name + ext)
+                try:
+                    os.remove(name + ext)
+                except:
+                    pass
