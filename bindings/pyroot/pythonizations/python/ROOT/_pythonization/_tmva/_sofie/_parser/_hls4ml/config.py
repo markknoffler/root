@@ -225,6 +225,13 @@ def _weights_from_hls_by_key(
                 wdict = w
             elif isinstance(w, (list, tuple)):
                 wlist = list(w)
+            else:
+                # Some hls4ml layers return `dict.values()` / ValuesView.
+                try:
+                    if hasattr(w, "__iter__"):
+                        wlist = list(w)
+                except Exception:
+                    pass
         except Exception:
             pass
     if hasattr(hls_layer, "weights") and not wdict:
@@ -606,15 +613,22 @@ def _canonicalize_layer(
 
         raw_arrays: List[np.ndarray] = []
         if isinstance(raw_w, dict):
-            for _k, _v in raw_w.items():
-                arr = _to_numpy(_v)
-                if arr is not None:
-                    raw_arrays.append(np.asarray(arr, dtype=np.float32))
+            it = list(raw_w.values())
         elif isinstance(raw_w, (list, tuple)):
-            for _v in raw_w:
-                arr = _to_numpy(_v)
-                if arr is not None:
-                    raw_arrays.append(np.asarray(arr, dtype=np.float32))
+            it = list(raw_w)
+        else:
+            # hls4ml Vivado backend can return `collections.abc.ValuesView`
+            # (e.g. `dict.values()`). Treat any iterable as a sequence of weights.
+            it = []
+            try:
+                if raw_w is not None and hasattr(raw_w, "__iter__"):
+                    it = list(raw_w)
+            except Exception:
+                it = []
+        for _v in it:
+            arr = _to_numpy(_v)
+            if arr is not None:
+                raw_arrays.append(np.asarray(arr, dtype=np.float32))
 
         # Conv2D kernel is expected to be 4D, bias is usually 1D.
         if layer_type == "Conv2D":
