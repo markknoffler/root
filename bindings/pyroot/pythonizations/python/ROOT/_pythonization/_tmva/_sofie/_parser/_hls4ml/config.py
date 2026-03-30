@@ -581,40 +581,55 @@ def _canonicalize_layer(
         if b_w is None:
             b_w = np.zeros(int(attrs.get("n_filt", k_w.shape[0])), dtype=np.float32)
         # Kernel layout handling:
-        # SOFIE expects [out_channels, in_channels, kh, kw].
-        # If hls4ml gives us [kh, kw, in_channels, out_channels] (HWIO), transpose.
-        if k_w.ndim == 4:
+        # SOFIE expects Conv weights as [out_channels, in_channels, kh, kw].
+        # hls4ml may provide different layouts depending on backend/version.
+        if getattr(k_w, "ndim", 0) == 4:
             in_name_for_conv = inputs[0] if inputs else None
             out_name_for_conv = outputs[0] if outputs else None
+
             in_c = None
-            out_c = None
             if in_name_for_conv and in_name_for_conv in tensor_shapes:
-                shp = tensor_shapes[in_name_for_conv]
-                in_c = int(shp[-1]) if len(shp) >= 1 else None
-            if out_name_for_conv and out_name_for_conv in tensor_shapes:
-                shp = tensor_shapes[out_name_for_conv]
-                out_c = int(shp[-1]) if len(shp) >= 1 else None
+                try:
+                    in_c = int(tensor_shapes[in_name_for_conv][-1])
+                except Exception:
+                    in_c = None
+
+            # Prefer bias length for out_c (most reliable).
+            out_c = None
+            try:
+                out_c = int(np.asarray(b_w, dtype=np.float32).flatten().shape[0])
+            except Exception:
+                out_c = None
+            if out_c is None and out_name_for_conv and out_name_for_conv in tensor_shapes:
+                try:
+                    out_c = int(tensor_shapes[out_name_for_conv][-1])
+                except Exception:
+                    out_c = None
             if out_c is None and "n_filt" in attrs:
                 try:
                     out_c = int(attrs["n_filt"])
                 except Exception:
-                    pass
+                    out_c = None
 
             if in_c is not None and out_c is not None:
-                # Already [out, in, kh, kw]
-                if int(k_w.shape[0]) == out_c and int(k_w.shape[1]) == in_c:
-                    pass
-                # HWIO: [kh, kw, in, out]
-                elif int(k_w.shape[-1]) == out_c and int(k_w.shape[-2]) == in_c:
-                    k_w = np.transpose(k_w, (3, 2, 0, 1)).copy()
-            else:
-                # Fallback: old heuristic.
-                try:
-                    n_filt = int(attrs.get("n_filt", k_w.shape[-1]))
-                    if int(k_w.shape[-1]) == n_filt:
-                        k_w = np.transpose(k_w, (3, 2, 0, 1)).copy()
-                except Exception:
-                    pass
+                kernel = np.asarray(k_w, dtype=np.float32)
+                # Candidate layouts -> transpose to OIHW
+                candidates = [
+                    (0, 1, 2, 3),  # OIHW
+                    (3, 2, 0, 1),  # HWIO -> OIHW (Keras)
+                    (0, 3, 1, 2),  # OHWI -> OIHW
+                    (1, 0, 2, 3),  # IOHW -> OIHW
+                    (3, 0, 1, 2),  # IHWO -> OIHW (rare)
+                    (2, 3, 0, 1),  # HWOI -> OIHW (rare)
+                ]
+                for perm in candidates:
+                    try:
+                        t = np.transpose(kernel, perm)
+                        if int(t.shape[0]) == out_c and int(t.shape[1]) == in_c:
+                            k_w = t.copy()
+                            break
+                    except Exception:
+                        continue
         canonical["initialisers"][name + "_kernel"] = np.ascontiguousarray(k_w, dtype=np.float32)
         canonical["initialisers"][name + "_bias"] = np.ascontiguousarray(b_w.flatten(), dtype=np.float32)
 
