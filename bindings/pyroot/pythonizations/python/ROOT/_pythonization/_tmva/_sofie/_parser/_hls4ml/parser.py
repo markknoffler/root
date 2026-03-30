@@ -189,6 +189,15 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
     attrs = layer_data["layerAttributes"]
     layer_name = attrs.get("name", "layer")
 
+    if debug:
+        try:
+            print(
+                f"DEBUG LAYER type={f_layer_type} name={layer_name} "
+                f"inputs={layer_data.get('layerInput')} outputs={layer_data.get('layerOutput')}"
+            )
+        except Exception:
+            pass
+
     # Pre-register (alias) all layer input tensor names so SOFIE ops can find them
     # even when extraction uses slightly different tensor-name suffixing.
     def _resolve_shape_for_name(tname: str):
@@ -647,16 +656,6 @@ def build_rmodel(cfg, name=None):
     rmodel = SOFIE.RModel.RModel(model_name, parsetime)
 
     node_shapes = {}
-    # Seed node shapes with the extracted tensor shapes from hls4ml.
-    # This is important for cases like pooling->flatten where SOFIE operators
-    # reference tensor names that are not created via intermediate parsing paths.
-    for tname, shp in (cfg.get("tensor_shapes") or {}).items():
-        try:
-            if shp is None:
-                continue
-            node_shapes[str(tname)] = list(shp)
-        except Exception:
-            continue
 
     # Register all inputs properly
     input_names = cfg.get("inputs", [])
