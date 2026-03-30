@@ -630,6 +630,15 @@ def _canonicalize_layer(
                             break
                     except Exception:
                         continue
+
+            # Some backends/operators interpret Conv as true convolution (kernel flipped),
+            # while Keras defines Conv2D as cross-correlation. If the kernel is now OIHW,
+            # flipping the spatial dims aligns conventions.
+            try:
+                if layer_type == "Conv2D" and getattr(k_w, "ndim", 0) == 4:
+                    k_w = np.asarray(k_w, dtype=np.float32)[:, :, ::-1, ::-1].copy()
+            except Exception:
+                pass
         canonical["initialisers"][name + "_kernel"] = np.ascontiguousarray(k_w, dtype=np.float32)
         canonical["initialisers"][name + "_bias"] = np.ascontiguousarray(b_w.flatten(), dtype=np.float32)
 
