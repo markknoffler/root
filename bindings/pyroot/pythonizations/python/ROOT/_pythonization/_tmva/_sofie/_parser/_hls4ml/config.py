@@ -645,7 +645,6 @@ def _canonicalize_layer(
                             break
                 if k_w is None:
                     k_w = kernel_candidates[0]
-                    break
 
         if k_w is None or b_w is None:
             w = _weights_from_hls_by_key(
