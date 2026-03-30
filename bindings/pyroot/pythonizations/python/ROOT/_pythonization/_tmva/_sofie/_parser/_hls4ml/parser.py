@@ -4,24 +4,44 @@ import math
 import numpy as np
 
 
-from .config import extract_hls_config, _activation_type_from_string
-from .schema import sofie_layer_dict
-from .layers.relu import MakeHLSReLU
-from .layers.elu import MakeHLSELU
-from .layers.gemm import MakeHLSGemm
-from .layers.permute import MakeHLSPermute
-from .layers.reshape import MakeHLSReshape
-from .layers.concat import MakeHLSConcat
-from .layers.batchnorm import MakeHLSBatchNorm
-from .layers.conv import MakeHLSConv
-from .layers.pooling import MakeHLSPooling
-from .layers.binary import MakeHLSBinary
-from .layers.sigmoid import MakeHLSSigmoid
-from .layers.tanh import MakeHLSTanh
-from .layers.softmax import MakeHLSSoftmax
-from .layers.swish import MakeHLSSwish
-from .layers.leaky_relu import MakeHLSLeakyRelu
-from .layers.selu import MakeHLSSeLU
+try:
+    from .config import extract_hls_config, _activation_type_from_string
+    from .schema import sofie_layer_dict
+    from .layers.relu import MakeHLSReLU
+    from .layers.elu import MakeHLSELU
+    from .layers.gemm import MakeHLSGemm
+    from .layers.permute import MakeHLSPermute
+    from .layers.reshape import MakeHLSReshape
+    from .layers.concat import MakeHLSConcat
+    from .layers.batchnorm import MakeHLSBatchNorm
+    from .layers.conv import MakeHLSConv
+    from .layers.pooling import MakeHLSPooling
+    from .layers.binary import MakeHLSBinary
+    from .layers.sigmoid import MakeHLSSigmoid
+    from .layers.tanh import MakeHLSTanh
+    from .layers.softmax import MakeHLSSoftmax
+    from .layers.swish import MakeHLSSwish
+    from .layers.leaky_relu import MakeHLSLeakyRelu
+    from .layers.selu import MakeHLSSeLU
+except (ImportError, ValueError):
+    from config import extract_hls_config, _activation_type_from_string
+    from schema import sofie_layer_dict
+    from layers.relu import MakeHLSReLU
+    from layers.elu import MakeHLSELU
+    from layers.gemm import MakeHLSGemm
+    from layers.permute import MakeHLSPermute
+    from layers.reshape import MakeHLSReshape
+    from layers.concat import MakeHLSConcat
+    from layers.batchnorm import MakeHLSBatchNorm
+    from layers.conv import MakeHLSConv
+    from layers.pooling import MakeHLSPooling
+    from layers.binary import MakeHLSBinary
+    from layers.sigmoid import MakeHLSSigmoid
+    from layers.tanh import MakeHLSTanh
+    from layers.softmax import MakeHLSSoftmax
+    from layers.swish import MakeHLSSwish
+    from layers.leaky_relu import MakeHLSLeakyRelu
+    from layers.selu import MakeHLSSeLU
 
 
 def MakeHLSActivation(layer):
