@@ -731,7 +731,9 @@ def build_rmodel(cfg, name=None):
 class PyHLS4ML:
     @staticmethod
     def ParseFromModelGraph(hls_model, name=None, keras_model=None):
-        cfg = extract_hls_config(hls_model, keras_model=keras_model)
+        # Extraction should depend only on the hls4ml ModelGraph (proposal requirement).
+        # keras_model is accepted for backwards compatibility but intentionally ignored.
+        cfg = extract_hls_config(hls_model, keras_model=None)
         return build_rmodel(cfg, name=name)
 
     @staticmethod

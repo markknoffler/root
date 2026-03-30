@@ -76,6 +76,31 @@ def _layer_type_from_hls(hls_layer: Any, cfg_layer: Dict[str, Any]) -> Optional[
         return "Conv2D"
     if "Conv1D" in class_name:
         return "Conv1D"
+
+    # hls4ml Vivado backend layer class names.
+    if class_name == "VivadoPooling2D":
+        op = str(attrs.get("pool_op", "")).lower()
+        if "max" in op:
+            return "MaxPooling2D"
+        if "avg" in op or "average" in op:
+            return "AveragePooling2D"
+        return "MaxPooling2D"
+    if class_name == "VivadoMerge":
+        fcpp = str(attrs.get("function_cpp", "")).lower()
+        mod = str(attrs.get("module", "")).lower()
+        if "nnet::add" in fcpp or ".layers.merging.add" in mod:
+            return "Add"
+        if "nnet::sub" in fcpp or ".layers.merging.subtract" in mod:
+            return "Subtract"
+        if "nnet::mul" in fcpp or "nnet::mult" in fcpp or ".layers.merging.multiply" in mod:
+            return "Multiply"
+        return None
+    if class_name == "VivadoReshape":
+        mod = str(attrs.get("module", "")).lower()
+        nm = str(cfg_layer.get("name", getattr(hls_layer, "name", ""))).lower()
+        if "flatten" in mod or nm == "flatten":
+            return "Flatten"
+        return "Reshape"
     lc = str(class_name).lower().replace("-", "_")
     # Pooling layer class names can appear as `MaxPooling2D`, `max_pooling2d`, `maxpool`, etc.
     if "maxpool" in lc or "max_pool" in lc or ("max" in lc and "pool" in lc):
@@ -181,6 +206,46 @@ def _to_numpy(x: Any) -> Optional[np.ndarray]:
     if hasattr(x, "data"):
         x = x.data
     return np.asarray(x, dtype=np.float32)
+
+
+def _weights_from_hls_by_key(
+    hls_layer: Any,
+    want: Dict[str, List[str]],
+) -> Dict[str, Optional[np.ndarray]]:
+    """
+    Extract named weight arrays from an hls4ml layer by heuristic key matching.
+    `want` maps output field -> list of substrings that should appear in the weight key.
+    """
+    wdict: Dict[str, Any] = {}
+    if hasattr(hls_layer, "get_weights"):
+        try:
+            w = hls_layer.get_weights()
+            if isinstance(w, dict):
+                wdict = w
+        except Exception:
+            pass
+    if hasattr(hls_layer, "weights") and not wdict:
+        try:
+            wattr = hls_layer.weights
+            if hasattr(wattr, "items"):
+                wdict = dict(wattr)
+        except Exception:
+            pass
+
+    out: Dict[str, Optional[np.ndarray]] = {k: None for k in want.keys()}
+    for k, v in (wdict or {}).items():
+        if v is None:
+            continue
+        ks = str(k).lower()
+        arr = _to_numpy(v)
+        if arr is None:
+            continue
+        for out_key, needles in want.items():
+            if out[out_key] is not None:
+                continue
+            if any(n in ks for n in needles):
+                out[out_key] = np.asarray(arr, dtype=np.float32)
+    return out
 
 
 def _dense_weights_from_hls(hls_layer: Any) -> Tuple[Dict[str, Any], Optional[np.ndarray], Optional[np.ndarray]]:
@@ -343,16 +408,10 @@ def _canonicalize_layer(
 
     if layer_type == "Dense":
         canonical["layerWeight"] = [name + "_W", name + "_B"]
-        # Prefer Keras weights when available (tests pass keras_model= into ParseFromModelGraph).
-        # This avoids any potential orientation/format differences in hls_layer weight extraction.
-        w_arr, b_arr = (None, None)
-        if keras_model is not None:
-            w_arr, b_arr = _get_dense_weights_from_keras(keras_model, name)
-        if w_arr is None:
-            _, w_arr, b_arr = _dense_weights_from_hls(hls_layer)
+        _, w_arr, b_arr = _dense_weights_from_hls(hls_layer)
         if w_arr is None:
             raise RuntimeError(
-                "Dense layer " + name + " has no weights (pass keras_model= for Keras-sourced HLS4ML)"
+                "Dense layer " + name + " has no weights in hls4ml layer"
             )
         if b_arr is None:
             b_arr = np.zeros(w_arr.shape[0], dtype=np.float32)
@@ -366,37 +425,74 @@ def _canonicalize_layer(
 
     elif layer_type == "BatchNormalization":
         canonical["layerWeight"] = [name + "_scale", name + "_bias", name + "_mean", name + "_var"]
-        g, b, m, v = _get_bn_weights_from_keras(keras_model, name)
-        if g is None:
-            raise RuntimeError("BatchNorm " + name + " needs keras_model= to load gamma/beta/mean/variance")
+        w = _weights_from_hls_by_key(
+            hls_layer,
+            {
+                "scale": ["scale", "gamma"],
+                "bias": ["bias", "beta"],
+                "mean": ["mean", "moving_mean"],
+                "var": ["var", "variance", "moving_variance"],
+            },
+        )
+        g, b, m, v = w["scale"], w["bias"], w["mean"], w["var"]
+        if g is None or b is None or m is None or v is None:
+            raise RuntimeError("BatchNorm " + name + " has incomplete weights in hls4ml layer")
         canonical["initialisers"][name + "_scale"] = np.ascontiguousarray(g.flatten(), dtype=np.float32)
         canonical["initialisers"][name + "_bias"] = np.ascontiguousarray(b.flatten(), dtype=np.float32)
         canonical["initialisers"][name + "_mean"] = np.ascontiguousarray(m.flatten(), dtype=np.float32)
         canonical["initialisers"][name + "_var"] = np.ascontiguousarray(v.flatten(), dtype=np.float32)
-        kl = _get_keras_layer(keras_model, name)
-        if kl is not None:
-            canonical["layerAttributes"]["epsilon"] = float(getattr(kl, "epsilon", 1e-3))
-            canonical["layerAttributes"]["momentum"] = float(getattr(kl, "momentum", 0.99))
-            ax = getattr(kl, "axis", -1)
-            canonical["layerAttributes"]["axis"] = ax[0] if isinstance(ax, (list, tuple)) else ax
-            if hasattr(kl, "data_format"):
-                canonical["channels_last"] = str(kl.data_format) == "channels_last"
+        if "axis" in attrs:
+            try:
+                canonical["layerAttributes"]["axis"] = int(attrs.get("axis", -1))
+            except Exception:
+                pass
+        if "epsilon" in attrs:
+            try:
+                canonical["layerAttributes"]["epsilon"] = float(attrs["epsilon"])
+            except Exception:
+                pass
 
     elif layer_type in ("Conv2D", "Conv1D"):
         canonical["layerWeight"] = [name + "_kernel", name + "_bias"]
-        k_w, b_w = _get_conv_weights_from_keras(keras_model, name)
+        w = _weights_from_hls_by_key(
+            hls_layer,
+            {"kernel": ["kernel", "weight", "weights", "w"], "bias": ["bias", "b"]},
+        )
+        k_w, b_w = w["kernel"], w["bias"]
         if k_w is None:
-            raise RuntimeError("Conv layer " + name + " needs keras_model= for kernel/bias weights")
+            raise RuntimeError("Conv layer " + name + " has no kernel weights in hls4ml layer")
+        if b_w is None:
+            b_w = np.zeros(int(attrs.get("n_filt", k_w.shape[0])), dtype=np.float32)
+        # Heuristic: if kernel looks like HWIO, transpose to OIHW for SOFIE.
+        if k_w.ndim == 4 and (k_w.shape[-1] == int(attrs.get("n_filt", k_w.shape[-1]))):
+            k_w = np.transpose(k_w, (3, 2, 0, 1)).copy()
+        elif k_w.ndim == 4 and k_w.shape[0] != int(attrs.get("n_filt", k_w.shape[0])):
+            k_w = np.transpose(k_w, (3, 2, 0, 1)).copy()
         canonical["initialisers"][name + "_kernel"] = np.ascontiguousarray(k_w, dtype=np.float32)
         canonical["initialisers"][name + "_bias"] = np.ascontiguousarray(b_w.flatten(), dtype=np.float32)
-        kl = _get_keras_layer(keras_model, name)
-        if kl is not None:
-            _fill_conv_attributes_from_keras(canonical, kl)
+        if "padding" in attrs:
+            canonical["layerAttributes"]["padding"] = str(attrs.get("padding", "valid"))
+        if "stride_height" in attrs and "stride_width" in attrs:
+            canonical["layerAttributes"]["strides"] = [int(attrs["stride_height"]), int(attrs["stride_width"])]
+        if "strides" not in canonical["layerAttributes"]:
+            canonical["layerAttributes"]["strides"] = list(_coerce_tuple(attrs.get("strides"), (1, 1)))
+        if "kernel_size" not in canonical["layerAttributes"]:
+            canonical["layerAttributes"]["kernel_size"] = list(_coerce_tuple(attrs.get("kernel_size"), (1, 1)))
+        canonical["layerAttributes"]["groups"] = int(attrs.get("groups", 1))
+        canonical["layerAttributes"]["dilation_rate"] = list(_coerce_tuple(attrs.get("dilation_rate"), (1, 1)))
+        if "n_filt" in attrs:
+            canonical["layerAttributes"]["n_filt"] = int(attrs["n_filt"])
 
     elif layer_type in ("MaxPooling2D", "AveragePooling2D", "GlobalAveragePooling2D"):
-        kl = _get_keras_layer(keras_model, name)
-        if kl is not None:
-            _fill_pool_attributes_from_keras(canonical, kl)
+        ph = attrs.get("pool_height", None)
+        pw = attrs.get("pool_width", None)
+        sh = attrs.get("stride_height", None)
+        sw = attrs.get("stride_width", None)
+        if ph is not None and pw is not None:
+            canonical["layerAttributes"]["pool_size"] = [int(ph), int(pw)]
+        if sh is not None and sw is not None:
+            canonical["layerAttributes"]["strides"] = [int(sh), int(sw)]
+        canonical["layerAttributes"]["padding"] = str(attrs.get("padding", "valid"))
 
     elif layer_type in ("Add", "Subtract", "Multiply"):
         if len(inputs) < 2:
