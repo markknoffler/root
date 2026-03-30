@@ -479,9 +479,7 @@ def build_rmodel(cfg, name=None):
                 output_names = list(outs)
                 break
     if output_names:
-        for oname in output_names:
-            # Ensure output tensor is explicitly marked
-            rmodel.AddOutputTensorName(oname)
+        rmodel.AddOutputTensorNameList(output_names)
 
     # Initialize model to register all intermediate tensors
     rmodel.Initialize()
