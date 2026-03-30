@@ -487,13 +487,19 @@ def extract_hls_config(hls_model: Any, keras_model: Any = None) -> Dict[str, Any
         if hasattr(layer, "inputs"):
             for x in layer.inputs:
                 n = getattr(x, "name", None)
-                inputs.append(str(x) if n is None else n)
+                if n is None:
+                    inputs.append(str(x).strip())
+                else:
+                    inputs.append(str(n).strip())
 
         outputs: List[str] = []
         if hasattr(layer, "outputs"):
             for x in layer.outputs:
                 n = getattr(x, "name", None)
-                outputs.append(str(x) if n is None else n)
+                if n is None:
+                    outputs.append(str(x).strip())
+                else:
+                    outputs.append(str(n).strip())
 
         shape = None
         if hasattr(layer, "get_output_variable"):
@@ -557,13 +563,19 @@ def extract_hls_config(hls_model: Any, keras_model: Any = None) -> Dict[str, Any
     if hasattr(hls_model, "inputs"):
         for x in hls_model.inputs:
             n = getattr(x, "name", None)
-            inputs.append(str(x) if n is None else n)
+            if n is None:
+                inputs.append(str(x).strip())
+            else:
+                inputs.append(str(n).strip())
 
     outputs: List[str] = []
     if hasattr(hls_model, "outputs"):
         for x in hls_model.outputs:
             n = getattr(x, "name", None)
-            outputs.append(str(x) if n is None else n)
+            if n is None:
+                outputs.append(str(x).strip())
+            else:
+                outputs.append(str(n).strip())
 
     # Provide explicit per-input shapes when we have a Keras model.
     # The build stage in SOFIE needs these exact ranks/dims; guessing from hls4ml inputs

@@ -139,6 +139,19 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
     # add one layer into RModel
     layer_data = copy.deepcopy(layer_data)
     f_layer_type = layer_data["layerType"]
+    def _add_intermediate_tensor_safe(tname, shape):
+        # SOFIE throws at build-time if a tensor name is added twice.
+        # We treat "already exists" as non-fatal because it can happen when we
+        # pre-register tensors for robustness.
+        from ROOT.TMVA.Experimental import SOFIE
+        try:
+            rmodel.AddIntermediateTensor(tname, SOFIE.ETensorType.FLOAT, shape)
+        except RuntimeError as e:
+            if "already exists" in str(e):
+                return False
+            raise
+        return True
+
     # Normalize layer type strings so we don't silently skip operators.
     if isinstance(f_layer_type, str):
         lc = f_layer_type.lower()
@@ -181,7 +194,7 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
             _ = rmodel.GetTensorShape(out_name)
         except Exception:
             try:
-                rmodel.AddIntermediateTensor(out_name, SOFIE.ETensorType.FLOAT, shape)
+                _add_intermediate_tensor_safe(out_name, shape)
             except Exception:
                 pass
 
@@ -282,6 +295,7 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
     from ROOT.TMVA.Experimental import SOFIE
     def _resolve_shape_for_name(tname: str):
         """Best-effort shape lookup for tensor names."""
+        tname = str(tname).strip()
         if tname in node_shapes:
             return node_shapes[tname]
         base = tname
@@ -293,9 +307,12 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
                     return node_shapes[base]
         # prefix match fallback
         for k, v in node_shapes.items():
-            if str(k).startswith(tname):
+            ks = str(k).strip()
+            if ks == tname:
                 return v
-            if str(tname).startswith(str(k)) and len(str(k)) > 0:
+            if ks.startswith(tname):
+                return v
+            if tname.startswith(ks) and len(ks) > 0:
                 return v
         return None
 
@@ -307,7 +324,7 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
             _ = rmodel.GetTensorShape(in_name)
         except Exception:
             try:
-                rmodel.AddIntermediateTensor(in_name, SOFIE.ETensorType.FLOAT, shape)
+                _add_intermediate_tensor_safe(in_name, shape)
             except Exception:
                 pass
 
@@ -541,7 +558,7 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
         # If shape inference fails, still register something so SOFIE can type tensors.
         output_shape = input_shape
 
-    rmodel.AddIntermediateTensor(f_layer_output, SOFIE.ETensorType.FLOAT, output_shape)
+    _add_intermediate_tensor_safe(f_layer_output, output_shape)
     node_shapes[f_layer_output] = output_shape
 
     rmodel.AddOperator(_move_op(op))
