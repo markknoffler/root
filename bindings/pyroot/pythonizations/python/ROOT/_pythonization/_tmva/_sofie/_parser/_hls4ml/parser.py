@@ -373,13 +373,21 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
                 h_out = math.ceil(h_in / s[0])
                 w_out = math.ceil(w_in / s[1])
             conv_out_shape = [input_shape[0], m_filters, h_out, w_out]
-        else: # Conv1D
-            l_in = input_shape[2]
+        else: # Conv1D or other
+            l_in = input_shape[-1] # Fallback if rank is not 3
+            if rank >= 3:
+                l_in = input_shape[2]
+                
             if pad == "valid":
                 l_out = (l_in - k[0]) // s[0] + 1
             else:
                 l_out = math.ceil(l_in / s[0])
-            conv_out_shape = [input_shape[0], m_filters, l_out]
+            
+            if rank == 3:
+                conv_out_shape = [input_shape[0], m_filters, l_out]
+            else:
+                # Fallback for unexpected rank
+                conv_out_shape = [input_shape[0], m_filters] + [l_out] * (rank - 2)
 
         rmodel.AddIntermediateTensor(post_name, SOFIE.ETensorType.FLOAT, conv_out_shape)
         node_shapes[post_name] = conv_out_shape
@@ -463,21 +471,30 @@ def build_rmodel(cfg, name=None):
         if raw_shape is None:
             raw_shape = cfg.get("input_shape", [1, 1])
         
-        if len(raw_shape) == 1:
-            raw_shape = [1, raw_shape[0]]
-            
-        # Sanitize shape: replace None or 0 with 1 for batch size and features
+        # Ensure we have a batch dimension of 1 if rank is too low
+        # Keras usually provides [H, W, C] but SOFIE wants [B, C, H, W]
+        # or [B, H, W, C] depending on the layer initialization.
+        # We enforce B=1 at index 0 if not present.
         sanitized_shape = []
         for x in raw_shape:
             try:
                 val = int(x)
-                sanitized_shape.append(val if val > 0 else 1)
+                if val is None or val <= 0: val = 1
+                sanitized_shape.append(val)
             except Exception:
                 sanitized_shape.append(1)
+        
+        # If rank is 1, treat as [1, N]
+        # If rank is 3, treat as [1, H, W, C]
+        if len(sanitized_shape) == 1:
+            sanitized_shape = [1, sanitized_shape[0]]
+        elif len(sanitized_shape) == 3:
+             sanitized_shape = [1] + sanitized_shape
         
         rmodel.AddInputTensorInfo(inp_name, SOFIE.ETensorType.FLOAT, sanitized_shape)
         rmodel.AddInputTensorName(inp_name)
         node_shapes[inp_name] = sanitized_shape
+        print(f"DEBUG: Registered input {inp_name} with shape {sanitized_shape}")
 
     rmodel.AddBlasRoutines({"Gemm", "Gemv"})
 
