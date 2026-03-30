@@ -41,7 +41,7 @@ def MakeHLSPooling(layer):
     elif "AveragePool" in fLayerType and "Global" not in fLayerType:
         PoolMode = SOFIE.PoolOpMode.AveragePool
     elif "GlobalAverage" in fLayerType:
-        PoolMode = SOFIE.PoolOpMode.GloabalAveragePool
+        PoolMode = SOFIE.PoolOpMode.GlobalAveragePool
     else:
         raise RuntimeError("TMVA::SOFIE - Unsupported pooling type " + str(fLayerType))
 

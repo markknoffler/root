@@ -43,11 +43,14 @@ def generate_and_test_inference_hls4ml(model_file_path: str, generated_header_fi
     hls_cfg = hls4ml.utils.config_from_keras_model(keras_model, granularity="name")
     if isinstance(hls_cfg, dict):
         hls_cfg.setdefault("Model", {})["Precision"] = "float"
+        hls_cfg["Model"]["Strategy"] = "latency"
         for _layer_name, layer_cfg in hls_cfg.get("LayerName", {}).items():
             if isinstance(layer_cfg, dict):
                 layer_cfg["Precision"] = "float"
+        # Explicitly set IOType to avoid some Vivado backend defaults that might fail
+        hls_cfg["Model"]["IOType"] = "io_parallel"
 
-    hls_model = hls4ml.converters.convert_from_keras_model(keras_model, hls_config=hls_cfg)
+    hls_model = hls4ml.converters.convert_from_keras_model(keras_model, hls_config=hls_cfg, backend="Vivado")
 
     print(
         "Generating inference code for the hls4ml model from",

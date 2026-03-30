@@ -53,6 +53,8 @@ def _activation_type_from_string(act: Any) -> Optional[str]:
         return "Swish"
     if a in ("leaky_relu", "leakyrelu"):
         return "LeakyReLU"
+    if a in ("thresholdedrelu",):
+        return "ThresholdedReLU"
     if a in ("linear", "none"):
         return None
     return None
