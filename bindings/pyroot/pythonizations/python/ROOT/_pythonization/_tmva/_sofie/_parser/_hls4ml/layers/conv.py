@@ -22,9 +22,11 @@ def MakeHLSConv(layer):
         fAttrAutopad = "VALID"
     elif fKerasPadding == "same":
         fAttrAutopad = "NOTSET"
-        fInputShape = attributes.get("_build_input_shape") or attributes.get("input_shape_for_padding")
-        if not fInputShape:
+        rawInputShape = attributes.get("_build_input_shape") or attributes.get("input_shape_for_padding")
+        if not rawInputShape:
             raise RuntimeError("TMVA::SOFIE - Conv 'same' padding requires input shape in layer attributes")
+        fInputShape = [ (int(x) if x and x > 0 else 1) for x in rawInputShape ]
+        
         if len(fAttrKernelShape) == 1:
             input_len = fInputShape[1]
             output_len = math.ceil(float(input_len) / float(fAttrStrides[0]))
@@ -33,6 +35,8 @@ def MakeHLSConv(layer):
             pad_after = pad_total - pad_before
             fAttrPads = [pad_before, pad_after]
         else:
+            # Assume channels_last for padding calculation if not specified
+            # (H, W) are at indices 1, 2
             input_height = fInputShape[1]
             input_width = fInputShape[2]
             output_height = math.ceil(float(input_height) / float(fAttrStrides[0]))

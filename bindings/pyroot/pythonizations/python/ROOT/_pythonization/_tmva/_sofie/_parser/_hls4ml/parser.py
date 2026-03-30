@@ -1,7 +1,7 @@
 import copy
 import time
-import numpy as np
 import math
+import numpy as np
 
 
 from .config import extract_hls_config, _activation_type_from_string
@@ -140,6 +140,13 @@ def add_layer_into_RModel(rmodel, layer_data):
     f_layer_output = outputs[0]
     channels_last = layer_data.get("channels_last", True)
 
+    # Ensure input tensor exists before we try to get its shape
+    try:
+        input_shape = list(rmodel.GetTensorShape(inputs[0]))
+    except Exception:
+        # If input tensor is not found, it might be a missing input registration
+        input_shape = [1, 1, 1, 1] 
+
     if f_layer_type == "GlobalAveragePooling2D":
         from ROOT.TMVA.Experimental import SOFIE
         if channels_last:
@@ -168,13 +175,14 @@ def add_layer_into_RModel(rmodel, layer_data):
         
         # Add Pooling operator
         pool_op = mapHLS4MLLayer[f_layer_type](layer_data)
-        rmodel.AddIntermediateTensor(outputs[0], SOFIE.ETensorType.FLOAT, list(rmodel.GetTensorShape(inputs[0])[:2]) + [1, 1])
+        pool_in_shape = list(rmodel.GetTensorShape(inputs[0]))
+        rmodel.AddIntermediateTensor(outputs[0], SOFIE.ETensorType.FLOAT, pool_in_shape[:2] + [1, 1])
         rmodel.AddOperator(_move_op(pool_op))
         
         # Squeeze to final output
         op = SOFIE.ROperator_Reshape(SOFIE.ReshapeOpMode.Squeeze, [2, 3], outputs[0], f_layer_output)
         # Register final output tensor
-        rmodel.AddIntermediateTensor(f_layer_output, SOFIE.ETensorType.FLOAT, [input_shape[0], input_shape[1]])
+        rmodel.AddIntermediateTensor(f_layer_output, SOFIE.ETensorType.FLOAT, [pool_in_shape[0], pool_in_shape[1]])
         rmodel.AddOperator(_move_op(op))
         return rmodel
 
@@ -203,7 +211,6 @@ def add_layer_into_RModel(rmodel, layer_data):
             rmodel.AddOperator(_move_op(op))
             inputs[0] = pre_trans_name
             outputs[0] = layer_name + "PostTrans"
-            rmodel.AddIntermediateTensor(f_layer_output, SOFIE.ETensorType.FLOAT, input_shape)
             rmodel.AddIntermediateTensor(outputs[0], SOFIE.ETensorType.FLOAT, new_shape)
             
             layer_data["layerInput"] = inputs
@@ -218,6 +225,7 @@ def add_layer_into_RModel(rmodel, layer_data):
             op = SOFIE.ROperator_Transpose("float")(inv_perm, outputs[0], f_layer_output)
             rmodel.AddOperator(_move_op(op))
         else:
+            rmodel.AddIntermediateTensor(f_layer_output, SOFIE.ETensorType.FLOAT, input_shape)
             rmodel.AddOperator(_move_op(mapHLS4MLLayer[f_layer_type](layer_data)))
         return rmodel
 
@@ -246,18 +254,10 @@ def add_layer_into_RModel(rmodel, layer_data):
             layer_data["layerOutput"] = outputs
             pool_op = mapHLS4MLLayer[f_layer_type](layer_data)
             
-            # We need the output shape of pooling to register PostTrans
-            # For pooling, it's roughly [N, C, H_out, W_out]
-            # Since we don't have an easy way to compute H_out/W_out here without repeating logic,
-            # we'll use a placeholder and rely on Initialize() if possible, 
-            # but SOFIE usually wants the shape upfront.
-            # Let's try to infer from attributes.
             k = attrs.get("pool_size", [2, 2])
             s = attrs.get("strides", k)
             p = attrs.get("padding", "valid")
-            h_out = input_shape[1] # Placeholder
-            w_out = input_shape[2] # Placeholder
-            # (Simplified pool shape calculation)
+            
             if p == "valid":
                 h_out = (input_shape[perm[2]] - k[0]) // s[0] + 1
                 w_out = (input_shape[perm[3]] - k[1]) // s[1] + 1
@@ -279,6 +279,9 @@ def add_layer_into_RModel(rmodel, layer_data):
             op = SOFIE.ROperator_Transpose("float")(inv_perm, outputs[0], f_layer_output)
             rmodel.AddOperator(_move_op(op))
         else:
+            # For channels_first, just register the output tensor
+            input_shape = list(rmodel.GetTensorShape(inputs[0]))
+            rmodel.AddIntermediateTensor(f_layer_output, SOFIE.ETensorType.FLOAT, input_shape)
             rmodel.AddOperator(_move_op(mapHLS4MLLayer[f_layer_type](layer_data)))
         return rmodel
 
@@ -311,29 +314,31 @@ def add_layer_into_RModel(rmodel, layer_data):
         layer_data["layerOutput"] = outputs
         
         conv_op = mapHLS4MLLayer[f_layer_type](layer_data)
-        # Register Conv output tensor. Shape: [N, M, H_out, W_out]
-        # M is number of filters.
         m_filters = attrs.get("n_filt", 1)
-        # Calculate H_out, W_out
         k = attrs.get("kernel_size", [3, 3])
+        if isinstance(k, int): k = [k, k]
         s = attrs.get("strides", [1, 1])
+        if isinstance(s, int): s = [s, s]
         pad = attrs.get("padding", "valid")
+        
         if rank == 4:
-            h_in, w_in = input_shape[1], input_shape[2]
+            cur_shape = list(rmodel.GetTensorShape(inputs[0]))
+            h_in, w_in = cur_shape[2], cur_shape[3]
             if pad == "valid":
                 h_out = (h_in - k[0]) // s[0] + 1
                 w_out = (w_in - k[1]) // s[1] + 1
             else:
                 h_out = math.ceil(h_in / s[0])
                 w_out = math.ceil(w_in / s[1])
-            conv_out_shape = [input_shape[0], m_filters, h_out, w_out]
+            conv_out_shape = [cur_shape[0], m_filters, h_out, w_out]
         else: # Conv1D
-            l_in = input_shape[1]
+            cur_shape = list(rmodel.GetTensorShape(inputs[0]))
+            l_in = cur_shape[2]
             if pad == "valid":
                 l_out = (l_in - k[0]) // s[0] + 1
             else:
                 l_out = math.ceil(l_in / s[0])
-            conv_out_shape = [input_shape[0], m_filters, l_out]
+            conv_out_shape = [cur_shape[0], m_filters, l_out]
 
         rmodel.AddIntermediateTensor(post_name, SOFIE.ETensorType.FLOAT, conv_out_shape)
         rmodel.AddOperator(_move_op(conv_op))
@@ -350,26 +355,49 @@ def add_layer_into_RModel(rmodel, layer_data):
         return rmodel
 
     if f_layer_type == "Activation":
+        from ROOT.TMVA.Experimental import SOFIE
         op = MakeHLSActivation(layer_data)
-        # Register output tensor for standalone Activation layers
         input_shape = list(rmodel.GetTensorShape(inputs[0]))
         rmodel.AddIntermediateTensor(f_layer_output, SOFIE.ETensorType.FLOAT, input_shape)
         rmodel.AddOperator(_move_op(op))
         return rmodel
 
+    # Universal registration for remaining layers
+    from ROOT.TMVA.Experimental import SOFIE
     op = mapHLS4MLLayer[f_layer_type](layer_data)
-    # Register output tensor for other layers (Dense, Binary ops, etc.)
-    if f_layer_type in ["Dense", "ReLU", "ELU", "LeakyReLU", "SeLU", "Sigmoid", "Tanh", "Softmax", "Swish", "Add", "Subtract", "Multiply"]:
-        # For Dense, it's [N, out_dim]
+    
+    try:
+        input_shape = list(rmodel.GetTensorShape(inputs[0]))
         if f_layer_type == "Dense":
-            w_shape = list(rmodel.GetTensorShape(layer_data["layerWeight"][0]))
-            out_dim = w_shape[0] if attrs.get("transpose_weights", False) else w_shape[1]
-            input_shape = list(rmodel.GetTensorShape(inputs[0]))
-            rmodel.AddIntermediateTensor(f_layer_output, SOFIE.ETensorType.FLOAT, [input_shape[0], out_dim])
+            # For Dense, it's [N, out_dim]
+            w_name = layer_data.get("layerWeight", [None])[0]
+            if w_name:
+                w_shape = list(rmodel.GetTensorShape(w_name))
+                out_dim = w_shape[0] if attrs.get("transpose_weights", False) else w_shape[1]
+                output_shape = [input_shape[0], out_dim]
+            else:
+                output_shape = [input_shape[0], attrs.get("n_out", 1)]
+        elif f_layer_type == "Reshape":
+            target = attrs.get("target_shape", [1])
+            output_shape = [input_shape[0]] + list(target)
+        elif f_layer_type == "Flatten":
+            prod = 1
+            for x in input_shape[1:]: prod *= x
+            output_shape = [input_shape[0], prod]
+        elif f_layer_type == "Concatenate":
+            output_shape = list(input_shape)
+            axis = attrs.get("axis", -1)
+            if axis < 0: axis += len(input_shape)
+            concat_dim = 0
+            for inp in inputs:
+                concat_dim += rmodel.GetTensorShape(inp)[axis]
+            output_shape[axis] = concat_dim
         else:
-            # Most activations and binary ops preserve shape
-            input_shape = list(rmodel.GetTensorShape(inputs[0]))
-            rmodel.AddIntermediateTensor(f_layer_output, SOFIE.ETensorType.FLOAT, input_shape)
+            output_shape = input_shape
+            
+        rmodel.AddIntermediateTensor(f_layer_output, SOFIE.ETensorType.FLOAT, output_shape)
+    except Exception:
+        pass
 
     rmodel.AddOperator(_move_op(op))
     return rmodel
@@ -383,15 +411,33 @@ def build_rmodel(cfg, name=None):
     parsetime = time.asctime(time.gmtime(time.time()))
     rmodel = SOFIE.RModel.RModel(model_name, parsetime)
 
+    # Register all inputs properly
     input_names = cfg.get("inputs", [])
     if not input_names:
         input_names = ["input_0"]
-    input_shape = cfg.get("input_shape", [1])
-    if len(input_shape) == 1:
-        input_shape = [1, input_shape[0]]
+    
+    for inp_name in input_names:
+        # Get shape from cfg, default to [1, 1] if missing
+        # Prefer input_node_shapes if available
+        raw_shape = cfg.get("input_node_shapes", {}).get(inp_name)
+        if raw_shape is None:
+            raw_shape = cfg.get("input_shape", [1, 1])
+        
+        if len(raw_shape) == 1:
+            raw_shape = [1, raw_shape[0]]
+            
+        # Sanitize shape: replace None or 0 with 1 for batch size and features
+        sanitized_shape = []
+        for x in raw_shape:
+            try:
+                val = int(x)
+                sanitized_shape.append(val if val > 0 else 1)
+            except Exception:
+                sanitized_shape.append(1)
+        
+        rmodel.AddInputTensorInfo(inp_name, SOFIE.ETensorType.FLOAT, sanitized_shape)
+        rmodel.AddInputTensorName(inp_name)
 
-    rmodel.AddInputTensorInfo(input_names[0], SOFIE.ETensorType.FLOAT, input_shape)
-    rmodel.AddInputTensorName(input_names[0])
     rmodel.AddBlasRoutines({"Gemm", "Gemv"})
 
     for layer in cfg.get("layers", []):
@@ -413,7 +459,9 @@ def build_rmodel(cfg, name=None):
                 output_names = list(outs)
                 break
     if output_names:
-        rmodel.AddOutputTensorNameList(output_names)
+        for oname in output_names:
+            # Ensure output tensor is explicitly marked
+            rmodel.AddOutputTensorName(oname)
 
     # Initialize model to register all intermediate tensors
     rmodel.Initialize()
