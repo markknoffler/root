@@ -398,6 +398,8 @@ def _canonicalize_layer(
     keras_model: Any,
     tensor_shapes: Dict[str, List[int]],
 ) -> Optional[Dict[str, Any]]:
+    import os
+    debug = os.environ.get("SOFIE_HLS4ML_DEBUG", "0") == "1"
     layer_type = _layer_type_from_hls(hls_layer, cfg_layer)
     if layer_type is None:
         return None
@@ -689,16 +691,21 @@ def _canonicalize_layer(
         # Normalize kernel layout to OIHW for SOFIE.
         if layer_type == "Conv2D" and getattr(k_w, "ndim", 0) == 4:
             kernel = np.asarray(k_w, dtype=np.float32)
+            chosen_layout = "unknown"
             if in_c is not None and out_c is not None:
                 # Prefer HWIO first; fall back to other common layouts.
                 if int(kernel.shape[-2]) == in_c and int(kernel.shape[-1]) == out_c:
                     k_w = np.transpose(kernel, (3, 2, 0, 1)).copy()  # HWIO -> OIHW
-                elif int(kernel.shape[0]) == out_c and int(kernel.shape[1]) == in_c:
-                    k_w = kernel.copy()  # already OIHW
+                    chosen_layout = "HWIO"
                 elif int(kernel.shape[0]) == out_c and int(kernel.shape[-1]) == in_c:
                     k_w = np.transpose(kernel, (0, 3, 1, 2)).copy()  # OHWI -> OIHW
+                    chosen_layout = "OHWI"
+                elif int(kernel.shape[0]) == out_c and int(kernel.shape[1]) == in_c:
+                    k_w = kernel.copy()  # already OIHW
+                    chosen_layout = "OIHW"
                 elif int(kernel.shape[0]) == in_c and int(kernel.shape[1]) == out_c:
                     k_w = np.transpose(kernel, (1, 0, 2, 3)).copy()  # IOHW -> OIHW
+                    chosen_layout = "IOHW"
                 else:
                     # Last-resort exhaustive attempt.
                     for perm in ((0, 1, 2, 3), (3, 2, 0, 1), (0, 3, 1, 2), (1, 0, 2, 3), (3, 0, 1, 2), (2, 3, 0, 1)):
@@ -706,12 +713,26 @@ def _canonicalize_layer(
                             t = np.transpose(kernel, perm)
                             if int(t.shape[0]) == out_c and int(t.shape[1]) == in_c:
                                 k_w = t.copy()
+                                chosen_layout = f"perm{perm}"
                                 break
                         except Exception:
                             continue
             else:
                 # If channel counts are unknown, assume HWIO (most common source layout).
                 k_w = np.transpose(kernel, (3, 2, 0, 1)).copy()
+                chosen_layout = "HWIO_no_channels"
+            if debug:
+                try:
+                    print(
+                        "DEBUG CONV EXTRACT "
+                        f"name={name} raw_kernel_shape={list(kernel.shape)} "
+                        f"raw_arrays={[list(a.shape) for a in raw_arrays]} "
+                        f"expected_in_c={expected_in_c} expected_out_c={expected_out_c} "
+                        f"bias_shape={list(np.asarray(b_w).flatten().shape) if b_w is not None else None} "
+                        f"chosen_layout={chosen_layout} final_kernel_shape={list(np.asarray(k_w).shape)}"
+                    )
+                except Exception:
+                    pass
         canonical["initialisers"][name + "_kernel"] = np.ascontiguousarray(k_w, dtype=np.float32)
         canonical["initialisers"][name + "_bias"] = np.ascontiguousarray(b_w.flatten(), dtype=np.float32)
 
