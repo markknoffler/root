@@ -7,6 +7,12 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
+def _normalize_tensor_name(name: Any) -> str:
+    # SOFIE tensor names must match exactly. hls4ml sometimes returns names with
+    # trailing spaces/newlines, so we canonicalize by removing all whitespace.
+    import re
+    return re.sub(r"\s+", "", str(name))
+
 
 def _get_keras_layer(keras_model: Any, layer_name: str) -> Any:
     if keras_model is None:
@@ -487,19 +493,15 @@ def extract_hls_config(hls_model: Any, keras_model: Any = None) -> Dict[str, Any
         if hasattr(layer, "inputs"):
             for x in layer.inputs:
                 n = getattr(x, "name", None)
-                if n is None:
-                    inputs.append(str(x).strip())
-                else:
-                    inputs.append(str(n).strip())
+                val = str(x) if n is None else str(n)
+                inputs.append(_normalize_tensor_name(val))
 
         outputs: List[str] = []
         if hasattr(layer, "outputs"):
             for x in layer.outputs:
                 n = getattr(x, "name", None)
-                if n is None:
-                    outputs.append(str(x).strip())
-                else:
-                    outputs.append(str(n).strip())
+                val = str(x) if n is None else str(n)
+                outputs.append(_normalize_tensor_name(val))
 
         shape = None
         if hasattr(layer, "get_output_variable"):
@@ -529,7 +531,7 @@ def extract_hls_config(hls_model: Any, keras_model: Any = None) -> Dict[str, Any
         for inp in hls_model.inputs:
             n = getattr(inp, "name", None)
             nm = str(inp) if n is None else n
-            nm = str(nm).strip()
+            nm = _normalize_tensor_name(nm)
             if hasattr(inp, "shape"):
                 try:
                     tensor_shapes[nm] = list(inp.shape)
@@ -564,19 +566,15 @@ def extract_hls_config(hls_model: Any, keras_model: Any = None) -> Dict[str, Any
     if hasattr(hls_model, "inputs"):
         for x in hls_model.inputs:
             n = getattr(x, "name", None)
-            if n is None:
-                inputs.append(str(x).strip())
-            else:
-                inputs.append(str(n).strip())
+            val = str(x) if n is None else str(n)
+            inputs.append(_normalize_tensor_name(val))
 
     outputs: List[str] = []
     if hasattr(hls_model, "outputs"):
         for x in hls_model.outputs:
             n = getattr(x, "name", None)
-            if n is None:
-                outputs.append(str(x).strip())
-            else:
-                outputs.append(str(n).strip())
+            val = str(x) if n is None else str(n)
+            outputs.append(_normalize_tensor_name(val))
 
     # Provide explicit per-input shapes when we have a Keras model.
     # The build stage in SOFIE needs these exact ranks/dims; guessing from hls4ml inputs
@@ -606,7 +604,7 @@ def extract_hls_config(hls_model: Any, keras_model: Any = None) -> Dict[str, Any
                     cleaned.append(val if val > 0 else 1)
                 except Exception:
                     cleaned.append(1)
-            k = str(getattr(x, "name", None) or str(x)).strip()
+            k = _normalize_tensor_name(getattr(x, "name", None) or str(x))
             input_node_shapes[k] = cleaned
 
     return {

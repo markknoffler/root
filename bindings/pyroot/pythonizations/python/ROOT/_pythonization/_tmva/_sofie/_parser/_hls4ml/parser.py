@@ -139,6 +139,10 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
     # add one layer into RModel
     layer_data = copy.deepcopy(layer_data)
     f_layer_type = layer_data["layerType"]
+    import re
+
+    def _normalize_tensor_name(name):
+        return re.sub(r"\s+", "", str(name))
     def _add_intermediate_tensor_safe(tname, shape):
         # SOFIE throws at build-time if a tensor name is added twice.
         # We treat "already exists" as non-fatal because it can happen when we
@@ -176,9 +180,9 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
         layer_data["layerType"] = f_layer_type
     # Normalize tensor names to avoid trailing whitespace mismatches.
     if isinstance(layer_data.get("layerInput"), list):
-        layer_data["layerInput"] = [str(x).strip() for x in layer_data["layerInput"]]
+        layer_data["layerInput"] = [_normalize_tensor_name(x) for x in layer_data["layerInput"]]
     if isinstance(layer_data.get("layerOutput"), list):
-        layer_data["layerOutput"] = [str(x).strip() for x in layer_data["layerOutput"]]
+        layer_data["layerOutput"] = [_normalize_tensor_name(x) for x in layer_data["layerOutput"]]
 
     attrs = layer_data["layerAttributes"]
     layer_name = attrs.get("name", "layer")
@@ -307,7 +311,7 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
         def _norm(s):
             return re.sub(r"\s+", "", str(s))
 
-        tname = str(tname).strip()
+        tname = str(tname)
         tname_n = _norm(tname)
         if tname in node_shapes:
             return node_shapes[tname]
