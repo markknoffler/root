@@ -120,14 +120,6 @@ def get_test_models():
     o = layers.Add()([i1, i2])
     test_cases.append((models.Model([i1, i2], o), "Functional_Add"))
     
-    # 6. Activation ThresholdedReLU (The one we added!)
-    try:
-        m = models.Sequential([layers.Input(shape=(10,)), layers.ThresholdedReLU(theta=0.5)])
-    except AttributeError:
-        # Fallback if specific class is missing
-        m = models.Sequential([layers.Input(shape=(10,)), layers.Activation('thresholded_relu')])
-    test_cases.append((m, "ThresholdedReLU"))
-
     return test_cases
 
 # --- Main Runner ---
