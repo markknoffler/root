@@ -121,8 +121,11 @@ def get_test_models():
     test_cases.append((models.Model([i1, i2], o), "Functional_Add"))
     
     # 6. Activation ThresholdedReLU (The one we added!)
-    # Note: Keras might name it differently, hls4ml will see it.
-    m = models.Sequential([layers.Input(shape=(10,)), layers.ThresholdedReLU(theta=0.5)])
+    try:
+        m = models.Sequential([layers.Input(shape=(10,)), layers.ThresholdedReLU(theta=0.5)])
+    except AttributeError:
+        # Fallback if specific class is missing
+        m = models.Sequential([layers.Input(shape=(10,)), layers.Activation('thresholded_relu')])
     test_cases.append((m, "ThresholdedReLU"))
 
     return test_cases
