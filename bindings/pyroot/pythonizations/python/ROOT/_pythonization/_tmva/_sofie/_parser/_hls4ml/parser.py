@@ -144,10 +144,12 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
         # We treat "already exists" as non-fatal because it can happen when we
         # pre-register tensors for robustness.
         from ROOT.TMVA.Experimental import SOFIE
+        tname = str(tname).strip()
         try:
             rmodel.AddIntermediateTensor(tname, SOFIE.ETensorType.FLOAT, shape)
-        except RuntimeError as e:
-            if "already exists" in str(e):
+        except Exception as e:
+            msg = str(e)
+            if "already exists" in msg or "already been added" in msg:
                 return False
             raise
         return True
@@ -172,6 +174,12 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
         elif lc == "conv1d":
             f_layer_type = "Conv1D"
         layer_data["layerType"] = f_layer_type
+    # Normalize tensor names to avoid trailing whitespace mismatches.
+    if isinstance(layer_data.get("layerInput"), list):
+        layer_data["layerInput"] = [str(x).strip() for x in layer_data["layerInput"]]
+    if isinstance(layer_data.get("layerOutput"), list):
+        layer_data["layerOutput"] = [str(x).strip() for x in layer_data["layerOutput"]]
+
     attrs = layer_data["layerAttributes"]
     layer_name = attrs.get("name", "layer")
 
