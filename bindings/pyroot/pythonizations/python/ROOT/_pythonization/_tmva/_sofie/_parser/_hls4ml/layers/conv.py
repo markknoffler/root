@@ -35,10 +35,17 @@ def MakeHLSConv(layer):
             pad_after = pad_total - pad_before
             fAttrPads = [pad_before, pad_after]
         else:
-            # Assume channels_last for padding calculation if not specified
-            # (H, W) are at indices 1, 2
-            input_height = fInputShape[1]
-            input_width = fInputShape[2]
+            # Handle both [H, W, C] and [B, H, W, C] style shapes.
+            if len(fInputShape) >= 4:
+                input_height = fInputShape[1]
+                input_width = fInputShape[2]
+            elif len(fInputShape) >= 3:
+                input_height = fInputShape[0]
+                input_width = fInputShape[1]
+            else:
+                raise RuntimeError(
+                    "TMVA::SOFIE - Conv 'same' padding needs at least 3D input shape"
+                )
             output_height = math.ceil(float(input_height) / float(fAttrStrides[0]))
             output_width = math.ceil(float(input_width) / float(fAttrStrides[1]))
             padding_height = max((output_height - 1) * fAttrStrides[0] + fAttrKernelShape[0] - input_height, 0)
