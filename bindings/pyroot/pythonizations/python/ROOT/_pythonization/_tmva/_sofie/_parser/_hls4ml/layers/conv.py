@@ -54,7 +54,9 @@ def MakeHLSConv(layer):
             padding_bottom = padding_height - padding_top
             padding_left = math.floor(padding_width / 2)
             padding_right = padding_width - padding_left
-            fAttrPads = [padding_top, padding_bottom, padding_left, padding_right]
+            # SOFIE Conv follows ONNX pad ordering for 2D: [H_begin, W_begin, H_end, W_end]
+            # i.e. [top, left, bottom, right].
+            fAttrPads = [padding_top, padding_left, padding_bottom, padding_right]
     else:
         raise RuntimeError("TMVA::SOFIE - Conv padding " + fKerasPadding + " is not supported")
 

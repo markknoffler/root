@@ -737,6 +737,8 @@ def _canonicalize_layer(
         canonical["initialisers"][name + "_bias"] = np.ascontiguousarray(b_w.flatten(), dtype=np.float32)
 
         # Conv attributes: SOFIE handlers assume these keys exist.
+        # hls4ml layer attributes are backend-dependent and often incomplete, so we
+        # infer missing values from tensor_shapes and/or kernel weights.
         def _derive_padding(attrs_local: Dict[str, Any]) -> str:
             p = attrs_local.get("padding", None)
             if p is None:
@@ -760,13 +762,26 @@ def _canonicalize_layer(
                         pass
             return "valid"
 
-        canonical["layerAttributes"]["padding"] = _derive_padding(attrs)
+        # First try to read padding from layer attributes.
+        padding_mode = _derive_padding(attrs)
 
-        # Kernel size
+        # Kernel size (prefer explicit attrs, else infer from kernel weights).
+        kernel_size = None
         if "kernel_height" in attrs and "kernel_width" in attrs:
-            canonical["layerAttributes"]["kernel_size"] = [int(attrs["kernel_height"]), int(attrs["kernel_width"])]
+            kernel_size = [int(attrs["kernel_height"]), int(attrs["kernel_width"])]
         else:
-            canonical["layerAttributes"]["kernel_size"] = list(_coerce_tuple(attrs.get("kernel_size"), (1, 1)))
+            ks_try = attrs.get("kernel_size")
+            if ks_try is not None:
+                kernel_size = list(_coerce_tuple(ks_try, (1, 1)))
+        if kernel_size is None and layer_type == "Conv2D" and hasattr(k_w, "shape") and getattr(k_w, "ndim", 0) == 4:
+            # k_w should be [out, in, kh, kw] after layout normalization.
+            try:
+                kernel_size = [int(k_w.shape[2]), int(k_w.shape[3])]
+            except Exception:
+                kernel_size = None
+        if kernel_size is None:
+            kernel_size = [1, 1] if layer_type == "Conv2D" else [1]
+        canonical["layerAttributes"]["kernel_size"] = kernel_size
 
         # Strides
         if "stride_height" in attrs and "stride_width" in attrs:
@@ -785,6 +800,25 @@ def _canonicalize_layer(
                 canonical["layerAttributes"]["n_filt"] = int(k_w.shape[0])
             except Exception:
                 pass
+
+        # If padding is not encoded in attrs (common in Vivado backend), infer it
+        # from input/output spatial shapes. This is critical for "same" convs,
+        # otherwise SOFIE will generate a 1x1/valid-like conv path.
+        try:
+            in_shp = tensor_shapes.get(in_name_for_conv) if in_name_for_conv else None
+            out_shp = tensor_shapes.get(out_name_for_conv) if out_name_for_conv else None
+            strides = canonical["layerAttributes"].get("strides", [1, 1])
+            if in_shp is not None and out_shp is not None and len(in_shp) >= 4 and len(out_shp) >= 4:
+                h_in, w_in = int(in_shp[1]), int(in_shp[2])
+                h_out, w_out = int(out_shp[1]), int(out_shp[2])
+                sh, sw = int(strides[0]), int(strides[1])
+                # For channels_last, SAME padding yields out = ceil(in/stride).
+                if h_out == int(np.ceil(h_in / sh)) and w_out == int(np.ceil(w_in / sw)):
+                    padding_mode = "same"
+        except Exception:
+            pass
+
+        canonical["layerAttributes"]["padding"] = padding_mode
 
     elif layer_type in ("MaxPooling2D", "AveragePooling2D", "GlobalAveragePooling2D"):
         ph = attrs.get("pool_height", None)
