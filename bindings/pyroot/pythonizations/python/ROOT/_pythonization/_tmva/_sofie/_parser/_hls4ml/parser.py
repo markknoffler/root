@@ -140,6 +140,8 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
     layer_data = copy.deepcopy(layer_data)
     f_layer_type = layer_data["layerType"]
     import re
+    import os
+    debug = os.environ.get("SOFIE_HLS4ML_DEBUG") == "1"
 
     def _normalize_tensor_name(name):
         return re.sub(r"\s+", "", str(name))
@@ -395,6 +397,11 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
     if f_layer_type in ("MaxPooling2D", "AveragePooling2D"):
         from ROOT.TMVA.Experimental import SOFIE
         rank = len(input_shape)
+        if debug:
+            print(
+                f"DEBUG POOL layer={layer_name} type={f_layer_type} channels_last={channels_last} "
+                f"layerInput={inputs} layerOutput={outputs} f_layer_output={f_layer_output}"
+            )
         if channels_last:
             # Default to axis -1 for channels_last
             axis = rank - 1
@@ -440,6 +447,12 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
             final_out_shape = [pool_out_shape[inv_p] for inv_p in inv_perm]
             rmodel.AddIntermediateTensor(f_layer_output, SOFIE.ETensorType.FLOAT, final_out_shape)
             node_shapes[f_layer_output] = final_out_shape
+            if debug:
+                try:
+                    _ = rmodel.GetTensorShape(f_layer_output)
+                    print(f"DEBUG POOL final tensor registered: {f_layer_output}")
+                except Exception as e:
+                    print(f"DEBUG POOL final tensor NOT registered: {f_layer_output}: {e}")
             op = SOFIE.ROperator_Transpose("float")(inv_perm, outputs[0], f_layer_output)
             rmodel.AddOperator(_move_op(op))
         else:
@@ -576,6 +589,12 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
         # If shape inference fails, still register something so SOFIE can type tensors.
         output_shape = input_shape
 
+    if debug and f_layer_type in ("Flatten", "Reshape", "Add", "Subtract", "Multiply"):
+        print(
+            f"DEBUG OP layer={layer_name} type={f_layer_type} "
+            f"layerInput={inputs} layerOutput={layer_data.get('layerOutput')} "
+            f"f_layer_output={f_layer_output} node_shapes has inputs={[k for k in inputs if k in node_shapes]}"
+        )
     _add_intermediate_tensor_safe(f_layer_output, output_shape)
     node_shapes[f_layer_output] = output_shape
 
