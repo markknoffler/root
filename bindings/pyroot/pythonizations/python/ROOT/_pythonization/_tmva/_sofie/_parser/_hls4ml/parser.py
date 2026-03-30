@@ -303,7 +303,12 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
     from ROOT.TMVA.Experimental import SOFIE
     def _resolve_shape_for_name(tname: str):
         """Best-effort shape lookup for tensor names."""
+        import re
+        def _norm(s):
+            return re.sub(r"\s+", "", str(s))
+
         tname = str(tname).strip()
+        tname_n = _norm(tname)
         if tname in node_shapes:
             return node_shapes[tname]
         base = tname
@@ -316,11 +321,12 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
         # prefix match fallback
         for k, v in node_shapes.items():
             ks = str(k).strip()
-            if ks == tname:
+            ks_n = _norm(ks)
+            if ks_n == tname_n:
                 return v
-            if ks.startswith(tname):
+            if ks_n.startswith(tname_n):
                 return v
-            if tname.startswith(ks) and len(ks) > 0:
+            if tname_n.startswith(ks_n) and len(ks_n) > 0:
                 return v
         return None
 
