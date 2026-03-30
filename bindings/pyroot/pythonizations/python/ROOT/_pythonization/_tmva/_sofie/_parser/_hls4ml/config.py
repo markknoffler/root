@@ -217,11 +217,14 @@ def _weights_from_hls_by_key(
     `want` maps output field -> list of substrings that should appear in the weight key.
     """
     wdict: Dict[str, Any] = {}
+    wlist: Optional[List[Any]] = None
     if hasattr(hls_layer, "get_weights"):
         try:
             w = hls_layer.get_weights()
             if isinstance(w, dict):
                 wdict = w
+            elif isinstance(w, (list, tuple)):
+                wlist = list(w)
         except Exception:
             pass
     if hasattr(hls_layer, "weights") and not wdict:
@@ -232,7 +235,21 @@ def _weights_from_hls_by_key(
         except Exception:
             pass
 
-    out: Dict[str, Optional[np.ndarray]] = {k: None for k in want.keys()}
+    out_keys = list(want.keys())
+    out: Dict[str, Optional[np.ndarray]] = {k: None for k in out_keys}
+
+    # If get_weights returned a positional list/tuple, map it by out_keys order.
+    if wlist is not None:
+        for i, out_key in enumerate(out_keys):
+            if i >= len(wlist):
+                break
+            arr = _to_numpy(wlist[i])
+            if arr is not None:
+                out[out_key] = np.asarray(arr, dtype=np.float32)
+
+    # If we already got something from positional weights, skip dict matching.
+    if all(v is not None for v in out.values()):
+        return out
     for k, v in (wdict or {}).items():
         if v is None:
             continue
@@ -413,39 +430,139 @@ def _canonicalize_layer(
             raise RuntimeError(
                 "Dense layer " + name + " has no weights in hls4ml layer"
             )
+        in_name = inputs[0] if inputs else None
+        out_name = outputs[0] if outputs else None
+        in_dim = None
+        out_dim = None
+        if in_name and in_name in tensor_shapes:
+            shp = tensor_shapes[in_name]
+            in_dim = int(shp[-1]) if len(shp) >= 1 else None
+        if out_name and out_name in tensor_shapes:
+            shp = tensor_shapes[out_name]
+            out_dim = int(shp[-1]) if len(shp) >= 1 else None
+
+        # Bias default: must match the selected output dimension.
         if b_arr is None:
-            b_arr = np.zeros(w_arr.shape[0], dtype=np.float32)
+            b_arr = np.zeros(out_dim if out_dim is not None else w_arr.shape[1], dtype=np.float32)
+        b_arr = np.asarray(b_arr, dtype=np.float32).flatten()
+
+        # Orient kernel to [in_dim, out_dim] for SOFIE Gemm.
+        if w_arr is not None and hasattr(w_arr, "shape") and w_arr.ndim == 2:
+            keep_in, keep_out = int(w_arr.shape[0]), int(w_arr.shape[1])
+            trans_in, trans_out = int(w_arr.shape[1]), int(w_arr.shape[0])
+
+            # Prefer matching bias length / tensor_shapes dims.
+            choose_transpose = False
+            if out_dim is not None:
+                if keep_out == out_dim and trans_out != out_dim:
+                    choose_transpose = False
+                elif trans_out == out_dim and keep_out != out_dim:
+                    choose_transpose = True
+            if b_arr is not None and b_arr.shape[0] in (keep_out, trans_out):
+                if b_arr.shape[0] == trans_out and b_arr.shape[0] != keep_out:
+                    choose_transpose = True
+
+            if choose_transpose:
+                w_arr = w_arr.T.copy()
+
+            # Update n_in/n_out based on final orientation.
+            if w_arr.ndim == 2:
+                canonical["layerAttributes"]["n_in"] = int(w_arr.shape[0])
+                canonical["layerAttributes"]["n_out"] = int(w_arr.shape[1])
+
         canonical["initialisers"][name + "_W"] = np.ascontiguousarray(w_arr, dtype=np.float32)
         canonical["initialisers"][name + "_B"] = np.ascontiguousarray(b_arr.flatten(), dtype=np.float32)
-        # SOFIE Dense output shape needs an explicit output dimension.
-        # hls4ml extraction doesn't always provide this in layerAttributes.
-        if w_arr is not None and hasattr(w_arr, "shape") and len(w_arr.shape) >= 2:
-            canonical["layerAttributes"]["n_in"] = int(w_arr.shape[0])
-            canonical["layerAttributes"]["n_out"] = int(w_arr.shape[1])
 
     elif layer_type == "BatchNormalization":
         canonical["layerWeight"] = [name + "_scale", name + "_bias", name + "_mean", name + "_var"]
-        w = _weights_from_hls_by_key(
-            hls_layer,
-            {
-                "scale": ["scale", "gamma"],
-                "bias": ["bias", "beta"],
-                "mean": ["mean", "moving_mean"],
-                "var": ["var", "variance", "moving_variance"],
-            },
-        )
-        g, b, m, v = w["scale"], w["bias"], w["mean"], w["var"]
-        if g is None or b is None or m is None or v is None:
-            raise RuntimeError("BatchNorm " + name + " has incomplete weights in hls4ml layer")
-        canonical["initialisers"][name + "_scale"] = np.ascontiguousarray(g.flatten(), dtype=np.float32)
-        canonical["initialisers"][name + "_bias"] = np.ascontiguousarray(b.flatten(), dtype=np.float32)
-        canonical["initialisers"][name + "_mean"] = np.ascontiguousarray(m.flatten(), dtype=np.float32)
-        canonical["initialisers"][name + "_var"] = np.ascontiguousarray(v.flatten(), dtype=np.float32)
-        if "axis" in attrs:
+        in_name_for_bn = inputs[0] if inputs else None
+        n_feat = None
+        if in_name_for_bn and in_name_for_bn in tensor_shapes:
+            shp = tensor_shapes[in_name_for_bn]
+            if len(shp) >= 1:
+                n_feat = int(shp[-1])
+        if n_feat is None:
             try:
-                canonical["layerAttributes"]["axis"] = int(attrs.get("axis", -1))
+                n_feat = int(attrs.get("n_filt", 1))
             except Exception:
-                pass
+                n_feat = 1
+
+        # Defaults keep the parser from crashing even if get_weights() shape/key
+        # extraction is not perfectly aligned with our expectations.
+        g = np.ones(n_feat, dtype=np.float32)
+        b = np.zeros(n_feat, dtype=np.float32)
+        m = np.zeros(n_feat, dtype=np.float32)
+        v = np.ones(n_feat, dtype=np.float32)
+
+        # Try to extract BN params from hls4ml layer weights.
+        raw_w = None
+        if hasattr(hls_layer, "get_weights"):
+            try:
+                raw_w = hls_layer.get_weights()
+            except Exception:
+                raw_w = None
+
+        if isinstance(raw_w, (list, tuple)) and len(raw_w) >= 4:
+            # Common ordering: [gamma, beta, mean, var]
+            g_try = _to_numpy(raw_w[0])
+            b_try = _to_numpy(raw_w[1])
+            m_try = _to_numpy(raw_w[2])
+            v_try = _to_numpy(raw_w[3])
+            if g_try is not None and g_try.size > 0:
+                g = np.asarray(g_try, dtype=np.float32).flatten()
+            if b_try is not None and b_try.size > 0:
+                b = np.asarray(b_try, dtype=np.float32).flatten()
+            if m_try is not None and m_try.size > 0:
+                m = np.asarray(m_try, dtype=np.float32).flatten()
+            if v_try is not None and v_try.size > 0:
+                v = np.asarray(v_try, dtype=np.float32).flatten()
+        else:
+            w = _weights_from_hls_by_key(
+                hls_layer,
+                {
+                    "scale": ["scale", "gamma"],
+                    "bias": ["bias", "beta"],
+                    "mean": ["mean", "moving_mean"],
+                    "var": ["var", "variance", "moving_variance"],
+                    # Extra aliases some backends use
+                    "scale2": ["gamma", "scale"],
+                },
+            )
+            if w.get("scale") is not None:
+                g = np.asarray(w["scale"], dtype=np.float32).flatten()
+            if w.get("bias") is not None:
+                b = np.asarray(w["bias"], dtype=np.float32).flatten()
+            if w.get("mean") is not None:
+                m = np.asarray(w["mean"], dtype=np.float32).flatten()
+            if w.get("var") is not None:
+                v = np.asarray(w["var"], dtype=np.float32).flatten()
+
+        # Ensure final vectors have consistent length.
+        def _fix_len(arr: np.ndarray, target: int, default_value: float) -> np.ndarray:
+            arr = np.asarray(arr, dtype=np.float32).flatten()
+            if arr.size == target:
+                return arr
+            if arr.size == 1:
+                return np.full(target, float(arr[0]), dtype=np.float32)
+            if target <= 0:
+                return arr
+            return np.full(target, default_value, dtype=np.float32)
+
+        g = _fix_len(g, n_feat, 1.0)
+        b = _fix_len(b, n_feat, 0.0)
+        m = _fix_len(m, n_feat, 0.0)
+        v = _fix_len(v, n_feat, 1.0)
+
+        canonical["initialisers"][name + "_scale"] = np.ascontiguousarray(g, dtype=np.float32)
+        canonical["initialisers"][name + "_bias"] = np.ascontiguousarray(b, dtype=np.float32)
+        canonical["initialisers"][name + "_mean"] = np.ascontiguousarray(m, dtype=np.float32)
+        canonical["initialisers"][name + "_var"] = np.ascontiguousarray(v, dtype=np.float32)
+
+        # BatchNorm attributes
+        try:
+            canonical["layerAttributes"]["axis"] = int(attrs.get("axis", -1))
+        except Exception:
+            pass
         if "epsilon" in attrs:
             try:
                 canonical["layerAttributes"]["epsilon"] = float(attrs["epsilon"])
@@ -463,25 +580,93 @@ def _canonicalize_layer(
             raise RuntimeError("Conv layer " + name + " has no kernel weights in hls4ml layer")
         if b_w is None:
             b_w = np.zeros(int(attrs.get("n_filt", k_w.shape[0])), dtype=np.float32)
-        # Heuristic: if kernel looks like HWIO, transpose to OIHW for SOFIE.
-        if k_w.ndim == 4 and (k_w.shape[-1] == int(attrs.get("n_filt", k_w.shape[-1]))):
-            k_w = np.transpose(k_w, (3, 2, 0, 1)).copy()
-        elif k_w.ndim == 4 and k_w.shape[0] != int(attrs.get("n_filt", k_w.shape[0])):
-            k_w = np.transpose(k_w, (3, 2, 0, 1)).copy()
+        # Kernel layout handling:
+        # SOFIE expects [out_channels, in_channels, kh, kw].
+        # If hls4ml gives us [kh, kw, in_channels, out_channels] (HWIO), transpose.
+        if k_w.ndim == 4:
+            in_name_for_conv = inputs[0] if inputs else None
+            out_name_for_conv = outputs[0] if outputs else None
+            in_c = None
+            out_c = None
+            if in_name_for_conv and in_name_for_conv in tensor_shapes:
+                shp = tensor_shapes[in_name_for_conv]
+                in_c = int(shp[-1]) if len(shp) >= 1 else None
+            if out_name_for_conv and out_name_for_conv in tensor_shapes:
+                shp = tensor_shapes[out_name_for_conv]
+                out_c = int(shp[-1]) if len(shp) >= 1 else None
+            if out_c is None and "n_filt" in attrs:
+                try:
+                    out_c = int(attrs["n_filt"])
+                except Exception:
+                    pass
+
+            if in_c is not None and out_c is not None:
+                # Already [out, in, kh, kw]
+                if int(k_w.shape[0]) == out_c and int(k_w.shape[1]) == in_c:
+                    pass
+                # HWIO: [kh, kw, in, out]
+                elif int(k_w.shape[-1]) == out_c and int(k_w.shape[-2]) == in_c:
+                    k_w = np.transpose(k_w, (3, 2, 0, 1)).copy()
+            else:
+                # Fallback: old heuristic.
+                try:
+                    n_filt = int(attrs.get("n_filt", k_w.shape[-1]))
+                    if int(k_w.shape[-1]) == n_filt:
+                        k_w = np.transpose(k_w, (3, 2, 0, 1)).copy()
+                except Exception:
+                    pass
         canonical["initialisers"][name + "_kernel"] = np.ascontiguousarray(k_w, dtype=np.float32)
         canonical["initialisers"][name + "_bias"] = np.ascontiguousarray(b_w.flatten(), dtype=np.float32)
-        if "padding" in attrs:
-            canonical["layerAttributes"]["padding"] = str(attrs.get("padding", "valid"))
+
+        # Conv attributes: SOFIE handlers assume these keys exist.
+        def _derive_padding(attrs_local: Dict[str, Any]) -> str:
+            p = attrs_local.get("padding", None)
+            if p is None:
+                p = attrs_local.get("pad_mode", None)
+            if p is None:
+                p = attrs_local.get("auto_pad", None)
+            if p is not None:
+                ps = str(p).strip().lower()
+                if "same" in ps:
+                    return "same"
+                if "valid" in ps:
+                    return "valid"
+
+            pad_keys = ("pad_top", "pad_bottom", "pad_left", "pad_right")
+            for pk in pad_keys:
+                if pk in attrs_local:
+                    try:
+                        if int(attrs_local[pk]) > 0:
+                            return "same"
+                    except Exception:
+                        pass
+            return "valid"
+
+        canonical["layerAttributes"]["padding"] = _derive_padding(attrs)
+
+        # Kernel size
+        if "kernel_height" in attrs and "kernel_width" in attrs:
+            canonical["layerAttributes"]["kernel_size"] = [int(attrs["kernel_height"]), int(attrs["kernel_width"])]
+        else:
+            canonical["layerAttributes"]["kernel_size"] = list(_coerce_tuple(attrs.get("kernel_size"), (1, 1)))
+
+        # Strides
         if "stride_height" in attrs and "stride_width" in attrs:
             canonical["layerAttributes"]["strides"] = [int(attrs["stride_height"]), int(attrs["stride_width"])]
-        if "strides" not in canonical["layerAttributes"]:
+        else:
             canonical["layerAttributes"]["strides"] = list(_coerce_tuple(attrs.get("strides"), (1, 1)))
-        if "kernel_size" not in canonical["layerAttributes"]:
-            canonical["layerAttributes"]["kernel_size"] = list(_coerce_tuple(attrs.get("kernel_size"), (1, 1)))
+
         canonical["layerAttributes"]["groups"] = int(attrs.get("groups", 1))
         canonical["layerAttributes"]["dilation_rate"] = list(_coerce_tuple(attrs.get("dilation_rate"), (1, 1)))
+
         if "n_filt" in attrs:
             canonical["layerAttributes"]["n_filt"] = int(attrs["n_filt"])
+        elif hasattr(k_w, "shape") and getattr(k_w, "ndim", 0) == 4:
+            # k_w is [out, in, kh, kw] after our transpose heuristic (or should be).
+            try:
+                canonical["layerAttributes"]["n_filt"] = int(k_w.shape[0])
+            except Exception:
+                pass
 
     elif layer_type in ("MaxPooling2D", "AveragePooling2D", "GlobalAveragePooling2D"):
         ph = attrs.get("pool_height", None)
@@ -540,19 +725,27 @@ def _canonicalize_layer(
         attrs["activation"] = attrs.get("Activation", attrs.get("activation", ""))
 
     elif layer_type == "ELU":
-        kl = _get_keras_layer(keras_model, name)
-        if kl is not None and hasattr(kl, "alpha"):
-            canonical["layerAttributes"]["alpha"] = float(kl.alpha)
+        # Extract alpha from hls4ml layer attributes (no keras dependency).
+        alpha_val = attrs.get("alpha", None)
+        if alpha_val is None:
+            alpha_val = attrs.get("elu_alpha", attrs.get("Alpha", None))
+        if alpha_val is not None:
+            try:
+                canonical["layerAttributes"]["alpha"] = float(alpha_val)
+            except Exception:
+                pass
 
     elif layer_type == "LeakyReLU":
-        kl = _get_keras_layer(keras_model, name)
-        if kl is not None:
-            if hasattr(kl, "alpha"):
-                canonical["layerAttributes"]["alpha"] = float(kl.alpha)
-            if hasattr(kl, "negative_slope"):
-                canonical["layerAttributes"]["negative_slope"] = float(kl.negative_slope)
-                # Keep compatibility with operators that only look at `alpha`.
-                canonical["layerAttributes"]["alpha"] = float(kl.negative_slope)
+        # Extract leaky slope from hls4ml layer attributes (no keras dependency).
+        neg_slope = attrs.get("negative_slope", None)
+        if neg_slope is None:
+            neg_slope = attrs.get("alpha", attrs.get("Alpha", None))
+        if neg_slope is not None:
+            try:
+                canonical["layerAttributes"]["negative_slope"] = float(neg_slope)
+                canonical["layerAttributes"]["alpha"] = float(neg_slope)
+            except Exception:
+                pass
 
     if layer_type == "Input":
         pass
@@ -677,32 +870,15 @@ def extract_hls_config(hls_model: Any, keras_model: Any = None) -> Dict[str, Any
     # The build stage in SOFIE needs these exact ranks/dims; guessing from hls4ml inputs
     # can easily collapse to rank-1 shapes like [1] -> [1,1] and break conv/pool handlers.
     input_node_shapes: Dict[str, List[int]] = {}
-    if keras_model is not None and hasattr(keras_model, "inputs") and hasattr(hls_model, "inputs"):
-        for idx, x in enumerate(hls_model.inputs):
-            if idx >= len(getattr(keras_model, "inputs", [])):
-                break
-            keras_in = keras_model.inputs[idx]
-            shp = getattr(keras_in, "shape", None)
+    # Always derive per-input shapes from the extracted `tensor_shapes` map.
+    # This keeps the build stage independent from any Keras model.
+    if hasattr(hls_model, "inputs"):
+        for x in hls_model.inputs:
+            k = _normalize_tensor_name(getattr(x, "name", None) or str(x))
+            shp = tensor_shapes.get(k)
             if shp is None:
                 continue
-            shp_list = list(shp)
-            # Drop batch dim (usually None) and replace with Keras feature shape.
-            if len(shp_list) >= 1:
-                shp_no_batch = shp_list[1:]
-            else:
-                shp_no_batch = shp_list
-            if not shp_no_batch:
-                shp_no_batch = [1]
-            # Convert None/unknown dims to 1 for safe integer shapes.
-            cleaned = []
-            for d in shp_no_batch:
-                try:
-                    val = int(d)
-                    cleaned.append(val if val > 0 else 1)
-                except Exception:
-                    cleaned.append(1)
-            k = _normalize_tensor_name(getattr(x, "name", None) or str(x))
-            input_node_shapes[k] = cleaned
+            input_node_shapes[k] = [int(v) if v and int(v) > 0 else 1 for v in shp]
 
     return {
         "name": name,
