@@ -139,8 +139,51 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
     # add one layer into RModel
     layer_data = copy.deepcopy(layer_data)
     f_layer_type = layer_data["layerType"]
+    # Normalize layer type strings so we don't silently skip operators.
+    if isinstance(f_layer_type, str):
+        lc = f_layer_type.lower()
+        if lc in ("add", "subtract", "multiply"):
+            f_layer_type = lc.capitalize()
+        elif "maxpool" in lc:
+            f_layer_type = "MaxPooling2D"
+        elif "averagepool" in lc and "global" not in lc:
+            f_layer_type = "AveragePooling2D"
+        elif "globalaveragepool" in lc:
+            f_layer_type = "GlobalAveragePooling2D"
+        elif lc == "flatten":
+            f_layer_type = "Flatten"
+        elif lc == "reshape":
+            f_layer_type = "Reshape"
+        elif lc == "conv2d":
+            f_layer_type = "Conv2D"
+        elif lc == "conv1d":
+            f_layer_type = "Conv1D"
+        layer_data["layerType"] = f_layer_type
     attrs = layer_data["layerAttributes"]
     layer_name = attrs.get("name", "layer")
+
+    # Pre-register declared output tensors when we already know their shapes.
+    # This avoids hard Generate-time failures if a tensor type was not registered
+    # due to naming mismatches in earlier layers.
+    from ROOT.TMVA.Experimental import SOFIE
+    declared_outputs = list(layer_data.get("layerOutput", []) or [])
+    for out_name in declared_outputs:
+        shape = None
+        if out_name in node_shapes:
+            shape = node_shapes[out_name]
+        elif isinstance(out_name, str) and "_" in out_name:
+            prefix, suffix = out_name.rsplit("_", 1)
+            if suffix.isdigit() and prefix in node_shapes:
+                shape = node_shapes[prefix]
+        if shape is None:
+            continue
+        try:
+            _ = rmodel.GetTensorShape(out_name)
+        except Exception:
+            try:
+                rmodel.AddIntermediateTensor(out_name, SOFIE.ETensorType.FLOAT, shape)
+            except Exception:
+                pass
 
     if f_layer_type in ("Reshape", "Flatten"):
         # SOFIE expects the reshape "shape vector" to include the batch dim for Reshape,
@@ -232,6 +275,41 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
         node_shapes[f_layer_output] = final_output_shape
         rmodel.AddOperator(_move_op(op))
         return rmodel
+
+    # Safety net: if an operator is about to read a tensor whose type wasn't registered
+    # (e.g. due to an extraction naming mismatch), register it from node_shapes so SOFIE
+    # can proceed. This is especially important for Reshape/Flatten inputs and binary ops.
+    from ROOT.TMVA.Experimental import SOFIE
+    def _resolve_shape_for_name(tname: str):
+        """Best-effort shape lookup for tensor names."""
+        if tname in node_shapes:
+            return node_shapes[tname]
+        base = tname
+        if "_" in tname:
+            prefix, suffix = tname.rsplit("_", 1)
+            if suffix.isdigit():
+                base = prefix
+                if base in node_shapes:
+                    return node_shapes[base]
+        # prefix match fallback
+        for k, v in node_shapes.items():
+            if str(k).startswith(tname):
+                return v
+            if str(tname).startswith(str(k)) and len(str(k)) > 0:
+                return v
+        return None
+
+    for in_name in list(layer_data.get("layerInput", [])):
+        shape = _resolve_shape_for_name(in_name)
+        if shape is None:
+            continue
+        try:
+            _ = rmodel.GetTensorShape(in_name)
+        except Exception:
+            try:
+                rmodel.AddIntermediateTensor(in_name, SOFIE.ETensorType.FLOAT, shape)
+            except Exception:
+                pass
 
     if f_layer_type == "BatchNormalization":
         from ROOT.TMVA.Experimental import SOFIE
