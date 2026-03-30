@@ -76,12 +76,13 @@ def _layer_type_from_hls(hls_layer: Any, cfg_layer: Dict[str, Any]) -> Optional[
         return "Conv2D"
     if "Conv1D" in class_name:
         return "Conv1D"
-    lc = str(class_name).lower()
-    if "maxpool" in lc:
+    lc = str(class_name).lower().replace("-", "_")
+    # Pooling layer class names can appear as `MaxPooling2D`, `max_pooling2d`, `maxpool`, etc.
+    if "maxpool" in lc or "max_pool" in lc or ("max" in lc and "pool" in lc):
         return "MaxPooling2D"
-    if "averagepool" in lc:
+    if "averagepool" in lc or "average_pool" in lc or ("average" in lc and "pool" in lc) or ("avg" in lc and "pool" in lc):
         return "AveragePooling2D"
-    if "globalaveragepool" in lc:
+    if "globalaveragepool" in lc or "global_average_pool" in lc or ("global" in lc and "avg" in lc and "pool" in lc):
         return "GlobalAveragePooling2D"
     if lc in ("add", "subtract", "multiply"):
         return class_name.capitalize()
@@ -615,6 +616,9 @@ def extract_hls_config(hls_model: Any, keras_model: Any = None) -> Dict[str, Any
         "outputs": outputs,
         "input_node_shapes": input_node_shapes,
         "input_shape": _infer_input_shape(hls_model),
+        # Direct shape map from the hls4ml ModelGraph variables.
+        # This is used by the build stage as a fallback for tensor registration.
+        "tensor_shapes": tensor_shapes,
     }
 
 

@@ -165,11 +165,11 @@ def add_layer_into_RModel(rmodel, layer_data, node_shapes):
         lc = f_layer_type.strip().lower()
         if lc in ("add", "subtract", "multiply"):
             f_layer_type = lc.capitalize()
-        elif "maxpool" in lc:
+        elif "maxpool" in lc or "max_pool" in lc or ("max" in lc and "pool" in lc):
             f_layer_type = "MaxPooling2D"
-        elif "averagepool" in lc and "global" not in lc:
+        elif ("averagepool" in lc or "average_pool" in lc) and "global" not in lc:
             f_layer_type = "AveragePooling2D"
-        elif "globalaveragepool" in lc:
+        elif "globalaveragepool" in lc or "global_average_pool" in lc:
             f_layer_type = "GlobalAveragePooling2D"
         elif lc == "flatten":
             f_layer_type = "Flatten"
@@ -647,6 +647,16 @@ def build_rmodel(cfg, name=None):
     rmodel = SOFIE.RModel.RModel(model_name, parsetime)
 
     node_shapes = {}
+    # Seed node shapes with the extracted tensor shapes from hls4ml.
+    # This is important for cases like pooling->flatten where SOFIE operators
+    # reference tensor names that are not created via intermediate parsing paths.
+    for tname, shp in (cfg.get("tensor_shapes") or {}).items():
+        try:
+            if shp is None:
+                continue
+            node_shapes[str(tname)] = list(shp)
+        except Exception:
+            continue
 
     # Register all inputs properly
     input_names = cfg.get("inputs", [])
