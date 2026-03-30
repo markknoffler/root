@@ -688,7 +688,7 @@ def _canonicalize_layer(
         if b_w is None:
             b_w = np.zeros(int(out_c if out_c is not None else attrs.get("n_filt", 1)), dtype=np.float32)
 
-        # Normalize kernel layout to OIHW for SOFIE.
+        # Normalize Conv kernel layout to OIHW for SOFIE.
         if layer_type == "Conv2D" and getattr(k_w, "ndim", 0) == 4:
             kernel = np.asarray(k_w, dtype=np.float32)
             chosen_layout = "unknown"
