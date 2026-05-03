@@ -1,6 +1,6 @@
 # [tmva][sofie] Fix Conv+Add fusion null operator path
 
-Fixes #<ISSUE_NUMBER>.
+Fixes #21978.
 
 In SOFIE ONNX parser, `Conv + Add` fusion was routed through `ParseFuseConvAdd`, but that path returned a null operator in the broken implementation. Since parser flow had already marked the `Add` node as fused, downstream nodes could observe missing tensor type registration and fail at runtime.
 
